@@ -67,6 +67,9 @@ app.post('/cadastro', async (req, res) => {
 app.post('/login', async (req, res) => {
   try {
     const { email, senha } = req.body;
+    if (typeof email !== 'string' || !email.trim() || typeof senha !== 'string' || !senha) {
+      return res.status(400).json({ erro: 'Informe e-mail e senha.' });
+    }
     
     // 1. Busca o usuário pelo email
     const resultado = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
@@ -80,6 +83,10 @@ app.post('/login', async (req, res) => {
     const senhaValida = await bcrypt.compare(senha, usuario.senha_hash);
     if (!senhaValida) {
       return res.status(400).json({ erro: 'Email ou senha inválidos.' });
+    }
+
+    if (!['APROVADO', 'PENDENTE'].includes(usuario.status_conta)) {
+      return res.status(403).json({ codigo: 'CONTA_SEM_ACESSO', erro: 'Sua conta não tem acesso. Procure a administração.' });
     }
 
     // 3. Se tudo estiver certo, gera o Token
@@ -122,33 +129,74 @@ app.post('/login', async (req, res) => {
 // === MIDDLEWARES DE SEGURANÇA ===
 // ========================================================
 
-const verificarToken = (req, res, next) => {
+const verificarToken = async (req, res, next) => {
   const authHeader = req.headers['authorization'];
-  if (!authHeader) return res.status(401).json({ erro: 'Acesso negado. Faça login para realizar esta ação.' });
-  
-  const token = authHeader.split(' ')[1];
+  const match = typeof authHeader === 'string' && /^Bearer ([^\s]+)$/i.exec(authHeader);
+  if (!match) return res.status(401).json({ erro: 'Sessão inválida. Faça login novamente.' });
+  let decodificado;
   try {
-    const decodificado = jwt.verify(token, JWT_SECRET);
-    req.usuario = decodificado;
-    next();
-  } catch (erro) {
-    res.status(401).json({ erro: 'Token inválido ou expirado. Faça login novamente.' });
+    decodificado = jwt.verify(match[1], JWT_SECRET, { algorithms: ['HS256'] });
+    if (!decodificado || !Number.isSafeInteger(decodificado.id) || decodificado.id <= 0) throw new Error('Identidade inválida');
+  } catch {
+    return res.status(401).json({ erro: 'Token inválido ou expirado. Faça login novamente.' });
   }
+  try {
+    // Permissões atuais: revogações não dependem da expiração do token.
+    const resultado = await pool.query(
+      'SELECT id, nivel_acesso, status_conta, congregacao_id FROM usuarios WHERE id = $1',
+      [decodificado.id]
+    );
+    const usuario = resultado.rows[0];
+    if (!usuario) return res.status(401).json({ erro: 'Sessão inválida. Faça login novamente.' });
+    if (!['MASTER', 'ADMIN', 'MEMBRO'].includes(usuario.nivel_acesso) ||
+        !['APROVADO', 'PENDENTE'].includes(usuario.status_conta)) {
+      return res.status(403).json({ codigo: 'CONTA_SEM_ACESSO', erro: 'Sua conta não tem acesso. Procure a administração.' });
+    }
+    req.usuario = usuario;
+  } catch (erro) {
+    console.error('Erro ao validar sessão:', erro);
+    return res.status(500).json({ erro: 'Não foi possível validar sua sessão.' });
+  }
+  return next();
+};
+
+const somenteGestores = (req, res, next) => {
+  if (!['MASTER', 'ADMIN'].includes(req.usuario.nivel_acesso)) {
+    return res.status(403).json({ erro: 'Apenas Master e administradores podem realizar esta ação.' });
+  }
+  return verificarAprovacao(req, res, next);
 };
 
 const verificarAprovacao = (req, res, next) => {
   if (req.usuario.nivel_acesso !== 'MASTER' && req.usuario.status_conta !== 'APROVADO') {
     return res.status(403).json({ erro: 'Sua conta ainda não foi aprovada pelo Master.' });
   }
-  next();
+  return next();
 };
 
 const somenteMaster = (req, res, next) => {
   if (req.usuario.nivel_acesso !== 'MASTER') {
     return res.status(403).json({ erro: 'Acesso negado. Apenas o Master pode realizar esta ação.' });
   }
-  next();
+  return verificarAprovacao(req, res, next);
 };
+
+// Dados atuais da sessão, sem senha/hash ou dados de outros usuários.
+app.get('/sessao', verificarToken, async (req, res) => {
+  try {
+    const resultado = await pool.query(`
+      SELECT id, nome_completo, nome_exibicao, email, nivel_acesso, status_conta,
+             congregacao_id, foto_perfil, telefone, cpf, bio
+      FROM usuarios WHERE id = $1
+    `, [req.usuario.id]);
+    if (!resultado.rowCount) return res.status(401).json({ erro: 'Sessão inválida. Faça login novamente.' });
+    res.set('Cache-Control', 'no-store');
+    res.json({ usuario: resultado.rows[0] });
+  } catch (erro) {
+    console.error('Erro ao carregar sessão:', erro);
+    res.status(500).json({ erro: 'Não foi possível carregar sua sessão.' });
+  }
+});
 
 // ========================================================
 // === ROTAS DE CONGREGAÇÕES ===
@@ -194,7 +242,7 @@ app.get('/eventos', verificarToken, async (req, res) => {
   }
 });
 
-app.post('/eventos', verificarToken, verificarAprovacao, async (req, res) => {
+app.post('/eventos', verificarToken, somenteGestores, async (req, res) => {
   try {
     const { titulo, data_inicio, data_fim, horario, congregacao_id, legenda } = req.body;
     const { id: usuario_id, nivel_acesso, congregacao_id: congregacaoAdmin } = req.usuario;
@@ -225,7 +273,7 @@ app.post('/eventos', verificarToken, verificarAprovacao, async (req, res) => {
   }
 });
 
-app.put('/eventos/:id', verificarToken, verificarAprovacao, async (req, res) => {
+app.put('/eventos/:id', verificarToken, somenteGestores, async (req, res) => {
   try {
     const eventoId = req.params.id;
     const { titulo, data_inicio, data_fim, horario, congregacao_id, legenda } = req.body;
@@ -259,7 +307,7 @@ app.put('/eventos/:id', verificarToken, verificarAprovacao, async (req, res) => 
   }
 });
 
-app.delete('/eventos/:id', verificarToken, verificarAprovacao, async (req, res) => {
+app.delete('/eventos/:id', verificarToken, somenteGestores, async (req, res) => {
   try {
     const eventoId = req.params.id;
     const { nivel_acesso, congregacao_id: congregacaoAdmin } = req.usuario;
@@ -286,7 +334,7 @@ app.delete('/eventos/:id', verificarToken, verificarAprovacao, async (req, res) 
 // === GESTÃO DE USUÁRIOS (MASTER E ADMIN) ===
 // ========================================================
 
-app.get('/usuarios', verificarToken, async (req, res) => {
+app.get('/usuarios', verificarToken, somenteGestores, async (req, res) => {
   try {
     const { nivel_acesso, congregacao_id } = req.usuario;
 
@@ -317,22 +365,28 @@ app.get('/usuarios', verificarToken, async (req, res) => {
   }
 });
 
-app.put('/usuarios/:id/status', verificarToken, async (req, res) => {
+app.put('/usuarios/:id/status', verificarToken, somenteGestores, async (req, res) => {
   try {
     const { id } = req.params;
     const { status_conta } = req.body;
     const { nivel_acesso, congregacao_id } = req.usuario;
 
-    if (nivel_acesso === 'ADMIN') {
-      const targetUser = await pool.query('SELECT congregacao_id FROM usuarios WHERE id = $1', [id]);
-      if (targetUser.rowCount === 0 || targetUser.rows[0].congregacao_id !== congregacao_id) {
-        return res.status(403).json({ erro: "Você só pode alterar status de usuários da sua congregação." });
-      }
+    if (!['APROVADO', 'PENDENTE', 'RECUSADO', 'BLOQUEADO'].includes(status_conta)) {
+      return res.status(400).json({ erro: 'Status de conta inválido.' });
     }
-    
-    const query = `UPDATE usuarios SET status_conta = $1 WHERE id = $2 RETURNING *;`;
-    const resultado = await pool.query(query, [status_conta, id]);
-    
+    if (String(id) === String(req.usuario.id)) {
+      return res.status(403).json({ erro: 'Você não pode alterar o próprio status.' });
+    }
+    // Escopo também no UPDATE para evitar alteração fora da congregação.
+    const resultado = await pool.query(`
+      UPDATE usuarios SET status_conta = $1 WHERE id = $2
+      AND ($3 = 'MASTER' OR (congregacao_id = $4 AND nivel_acesso = 'MEMBRO'))
+      RETURNING id, nome_completo, nome_exibicao, email, nivel_acesso, status_conta, congregacao_id;
+    `, [status_conta, id, nivel_acesso, congregacao_id]);
+    if (!resultado.rowCount) {
+      return res.status(404).json({ erro: 'Usuário não encontrado ou fora da sua permissão.' });
+    }
+
     res.json({ mensagem: "Status atualizado com sucesso!", usuario: resultado.rows[0] });
   } catch (erro) {
     console.error("Erro ao atualizar status:", erro);
@@ -345,8 +399,16 @@ app.put('/usuarios/:id/nivel', verificarToken, somenteMaster, async (req, res) =
     const { id } = req.params;
     const { nivel_acesso } = req.body;
     
-    const query = `UPDATE usuarios SET nivel_acesso = $1 WHERE id = $2 RETURNING *;`;
+    if (!['MASTER', 'ADMIN', 'MEMBRO'].includes(nivel_acesso)) {
+      return res.status(400).json({ erro: 'Nível de acesso inválido.' });
+    }
+    if (String(id) === String(req.usuario.id)) {
+      return res.status(403).json({ erro: 'Você não pode alterar o próprio nível de acesso.' });
+    }
+    const query = `UPDATE usuarios SET nivel_acesso = $1 WHERE id = $2
+      RETURNING id, nome_completo, nome_exibicao, email, nivel_acesso, status_conta, congregacao_id;`;
     const resultado = await pool.query(query, [nivel_acesso, id]);
+    if (!resultado.rowCount) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     
     res.json({ mensagem: "Nível de acesso atualizado com sucesso!", usuario: resultado.rows[0] });
   } catch (erro) {
@@ -367,7 +429,8 @@ app.put('/usuarios/:id/congregacao', verificarToken, somenteMaster, async (req, 
     }
 
     const query = `UPDATE usuarios SET congregacao_id = $1 WHERE id = $2 RETURNING *;`;
-    await pool.query(query, [congregacao_id, id]);
+    const alteracao = await pool.query(query, [congregacao_id, id]);
+    if (!alteracao.rowCount) return res.status(404).json({ erro: 'Usuário não encontrado.' });
     
     const usuarioAtualizado = await pool.query(`
       SELECT u.id, u.nome_completo, u.nome_exibicao, u.email, u.nivel_acesso, u.status_conta, u.cpf, u.telefone, u.foto_perfil, c.nome as congregacao, c.id as congregacao_id
@@ -411,7 +474,7 @@ app.put('/usuarios/perfil', verificarToken, async (req, res) => {
 // === ROTAS DO MURAL DE EVENTOS ===
 // ========================================================
 
-app.post('/mural', verificarToken, async (req, res) => {
+app.post('/mural', verificarToken, somenteGestores, async (req, res) => {
   try {
     const { titulo, descricao, local, tipo_midia, midia, data_inicio, data_fim } = req.body;
     const usuario_id = req.usuario.id;
@@ -477,7 +540,7 @@ app.get('/mural', verificarToken, async (req, res) => {
   }
 });
 
-app.delete('/mural/:id', verificarToken, async (req, res) => {
+app.delete('/mural/:id', verificarToken, somenteGestores, async (req, res) => {
   try {
     const post_id = req.params.id;
     const { nivel_acesso, congregacao_id } = req.usuario;
@@ -503,7 +566,7 @@ app.delete('/mural/:id', verificarToken, async (req, res) => {
   }
 });
 
-app.post('/mural/:id/curtir', verificarToken, async (req, res) => {
+app.post('/mural/:id/curtir', verificarToken, verificarAprovacao, async (req, res) => {
   try {
     const post_id = req.params.id;
     const usuario_id = req.usuario.id;
@@ -548,7 +611,7 @@ app.get('/mural/:id/comentarios', verificarToken, async (req, res) => {
   }
 });
 
-app.post('/mural/:id/comentarios', verificarToken, async (req, res) => {
+app.post('/mural/:id/comentarios', verificarToken, verificarAprovacao, async (req, res) => {
   try {
     const post_id = req.params.id;
     const usuario_id = req.usuario.id;
@@ -579,7 +642,7 @@ app.post('/mural/:id/comentarios', verificarToken, async (req, res) => {
   }
 });
 
-app.post('/comentarios/:id/curtir', verificarToken, async (req, res) => {
+app.post('/comentarios/:id/curtir', verificarToken, verificarAprovacao, async (req, res) => {
   try {
     const comentario_id = req.params.id;
     const usuario_id = req.usuario.id;
@@ -599,7 +662,7 @@ app.post('/comentarios/:id/curtir', verificarToken, async (req, res) => {
   }
 });
 
-app.delete('/comentarios/:id', verificarToken, async (req, res) => {
+app.delete('/comentarios/:id', verificarToken, verificarAprovacao, async (req, res) => {
   try {
     const comentario_id = req.params.id;
     const { id: usuario_id, nivel_acesso, congregacao_id } = req.usuario;
