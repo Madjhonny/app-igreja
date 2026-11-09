@@ -17,7 +17,7 @@ export default function TelaPerfilPublico() {
     try {
       const token = await AsyncStorage.getItem('userToken');
       // ⚠️ ATENÇÃO: TROQUE PELO SEU IP REAL SE NECESSÁRIO
-      const resposta = await fetch(`http://192.168.1.71:3000/usuarios/${id}/perfil-publico`, {
+      const resposta = await fetch(`https://app-igreja-eks0.onrender.com/usuarios/${id}/perfil-publico`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       const dados = await resposta.json();

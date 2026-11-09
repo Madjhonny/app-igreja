@@ -127,7 +127,7 @@ export default function TelaCriarPost() {
 
     setCarregando(true);
     try {
-      const resposta = await fetch('http://192.168.1.71:3000/mural', { // ⚠️ Ajuste seu IP se necessário
+      const resposta = await fetch('https://app-igreja-eks0.onrender.com/mural', { // ⚠️ Ajuste seu IP se necessário
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',

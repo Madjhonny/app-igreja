@@ -66,7 +66,7 @@ export default function TelaEditarPerfil() {
   const salvarPerfil = async () => {
     setCarregando(true);
     try {
-      const resposta = await fetch('http://192.168.1.71:3000/usuarios/perfil', {
+      const resposta = await fetch('https://app-igreja-eks0.onrender.com/usuarios/perfil', {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

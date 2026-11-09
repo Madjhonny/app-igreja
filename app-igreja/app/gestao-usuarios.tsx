@@ -21,7 +21,7 @@ export default function TelaGestaoUsuarios() {
       const parsedUser = JSON.parse(userData);
       setUsuarioLogado(parsedUser);
 
-      const resposta = await fetch('http://192.168.1.71:3000/usuarios', {
+      const resposta = await fetch('https://app-igreja-eks0.onrender.com/usuarios', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
 

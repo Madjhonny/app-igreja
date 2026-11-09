@@ -56,7 +56,7 @@ export default function TelaCriarEvento() {
     }
 
     try {
-      const resposta = await fetch('http://192.168.1.71:3000/congregacoes');
+      const resposta = await fetch('https://app-igreja-eks0.onrender.com/congregacoes');
       if (resposta.ok) {
         const dados = await resposta.json();
         setCongregacoes(dados);
@@ -118,7 +118,7 @@ export default function TelaCriarEvento() {
 
     setCarregando(true);
     try {
-      const resposta = await fetch('http://192.168.1.71:3000/eventos', {
+      const resposta = await fetch('https://app-igreja-eks0.onrender.com/eventos', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',

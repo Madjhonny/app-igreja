@@ -66,7 +66,7 @@ export default function TelaLogin() {
 
     setCarregando(true);
     try {
-      const resposta = await fetch('http://192.168.1.71:3000/login', {
+      const resposta = await fetch('https://app-igreja-eks0.onrender.com/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, senha })

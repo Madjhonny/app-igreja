@@ -1,7 +1,6 @@
-
 {
   "expo": {
-    "name": "app-igreja",
+    "name": "Agenda ADP",
     "slug": "app-igreja",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -12,6 +11,7 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "br.com.agendaadp.app",
       "adaptiveIcon": {
         "backgroundColor": "#2A4B4C",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -45,6 +45,16 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "4ed113a1-1bd0-4c46-8446-b5c49d429d64"
+      }
     }
   }
 }

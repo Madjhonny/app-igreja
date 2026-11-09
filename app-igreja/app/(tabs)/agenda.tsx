@@ -159,7 +159,7 @@ export default function TelaAgenda() {
     setCarregando(true);
     try {
       const userToken = await AsyncStorage.getItem('userToken');
-      const resposta = await fetch(`http://192.168.1.71:3000/eventos?mes=${mes}&ano=${ano}`, {
+      const resposta = await fetch(`https://app-igreja-eks0.onrender.com/eventos?mes=${mes}&ano=${ano}`, {
         headers: { 'Authorization': `Bearer ${userToken || ''}` }
       });
       if (resposta.ok) {
@@ -303,7 +303,7 @@ export default function TelaAgenda() {
 
   const excluirEvento = async (eventoId: number) => {
     try {
-      const resposta = await fetch(`http://192.168.1.71:3000/eventos/${eventoId}`, {
+      const resposta = await fetch(`https://app-igreja-eks0.onrender.com/eventos/${eventoId}`, {
         method: 'DELETE',
         headers: { 'Authorization': `Bearer ${token}` }
       });

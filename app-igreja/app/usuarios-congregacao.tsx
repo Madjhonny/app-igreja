@@ -31,13 +31,13 @@ export default function TelaUsuariosCongregacao() {
       setUsuarioLogado(JSON.parse(userData));
 
       // Busca congregações cadastradas
-      const respCong = await fetch('http://192.168.1.71:3000/congregacoes');
+      const respCong = await fetch('https://app-igreja-eks0.onrender.com/congregacoes');
       if (respCong.ok) {
         setListaCongregacoes(await respCong.json());
       }
 
       // Busca usuários
-      const resposta = await fetch('http://192.168.1.71:3000/usuarios', {
+      const resposta = await fetch('https://app-igreja-eks0.onrender.com/usuarios', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
 
@@ -58,7 +58,7 @@ export default function TelaUsuariosCongregacao() {
   const alterarStatus = async (novoStatus: string) => {
     setModalStatusVisivel(false);
     try {
-      const resposta = await fetch(`http://192.168.1.71:3000/usuarios/${usuarioSelecionado.id}/status`, {
+      const resposta = await fetch(`https://app-igreja-eks0.onrender.com/usuarios/${usuarioSelecionado.id}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenMaster}` },
         body: JSON.stringify({ status_conta: novoStatus })
@@ -73,7 +73,7 @@ export default function TelaUsuariosCongregacao() {
   const alterarNivel = async (novoNivel: string) => {
     setModalNivelVisivel(false);
     try {
-      const resposta = await fetch(`http://192.168.1.71:3000/usuarios/${usuarioSelecionado.id}/nivel`, {
+      const resposta = await fetch(`https://app-igreja-eks0.onrender.com/usuarios/${usuarioSelecionado.id}/nivel`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenMaster}` },
         body: JSON.stringify({ nivel_acesso: novoNivel })
@@ -88,7 +88,7 @@ export default function TelaUsuariosCongregacao() {
   const alterarCongregacao = async (novaCongregacaoId: number, nomeNovaCongregacao: string) => {
     setModalTrocarCongregacaoVisivel(false);
     try {
-      const resposta = await fetch(`http://192.168.1.71:3000/usuarios/${usuarioSelecionado.id}/congregacao`, {
+      const resposta = await fetch(`https://app-igreja-eks0.onrender.com/usuarios/${usuarioSelecionado.id}/congregacao`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenMaster}` },
         body: JSON.stringify({ congregacao_id: novaCongregacaoId })

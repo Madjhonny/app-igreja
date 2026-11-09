@@ -129,7 +129,7 @@ export default function TelaEventos() {
   const buscarPosts = async (userToken: string, isRefresh = false) => {
     if (!isRefresh) setCarregando(true);
     try {
-      const resposta = await fetch('http://192.168.1.71:3000/mural', {
+      const resposta = await fetch('https://app-igreja-eks0.onrender.com/mural', {
         headers: { 'Authorization': `Bearer ${userToken}` }
       });
       if (resposta.ok) {
@@ -153,7 +153,7 @@ export default function TelaEventos() {
 
   const verificarNovosPostsBackground = async () => {
     try {
-      const resposta = await fetch('http://192.168.1.71:3000/mural', {
+      const resposta = await fetch('https://app-igreja-eks0.onrender.com/mural', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (resposta.ok) {
@@ -191,7 +191,7 @@ export default function TelaEventos() {
     });
 
     try {
-      await fetch(`http://192.168.1.71:3000/mural/${postId}/curtir`, {
+      await fetch(`https://app-igreja-eks0.onrender.com/mural/${postId}/curtir`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -213,7 +213,7 @@ export default function TelaEventos() {
     });
 
     try {
-      await fetch(`http://192.168.1.71:3000/comentarios/${comentarioId}/curtir`, {
+      await fetch(`https://app-igreja-eks0.onrender.com/comentarios/${comentarioId}/curtir`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
@@ -230,7 +230,7 @@ export default function TelaEventos() {
 
   const carregarComentarios = async (postId: number) => {
     try {
-      const resp = await fetch(`http://192.168.1.71:3000/mural/${postId}/comentarios`, {
+      const resp = await fetch(`https://app-igreja-eks0.onrender.com/mural/${postId}/comentarios`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (resp.ok) {
@@ -252,7 +252,7 @@ export default function TelaEventos() {
     if (!textoComentario.trim() || !postSelecionadoId) return;
 
     try {
-      const resp = await fetch(`http://192.168.1.71:3000/mural/${postSelecionadoId}/comentarios`, {
+      const resp = await fetch(`https://app-igreja-eks0.onrender.com/mural/${postSelecionadoId}/comentarios`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
         body: JSON.stringify({
@@ -279,7 +279,7 @@ export default function TelaEventos() {
         style: "destructive",
         onPress: async () => {
           try {
-            const resp = await fetch(`http://192.168.1.71:3000/mural/${postId}`, {
+            const resp = await fetch(`https://app-igreja-eks0.onrender.com/mural/${postId}`, {
               method: 'DELETE',
               headers: { 'Authorization': `Bearer ${token}` }
             });

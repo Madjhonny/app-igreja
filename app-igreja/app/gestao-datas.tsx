@@ -18,7 +18,7 @@ import { router, Stack, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
-const API_URL = 'http://192.168.1.71:3000';
+const API_URL = 'https://app-igreja-eks0.onrender.com';
 
 const MESES = [
   'JANEIRO', 'FEVEREIRO', 'MARÇO', 'ABRIL',
