@@ -3,6 +3,7 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const { rateLimit } = require('express-rate-limit');
 require('dotenv').config();
 
 
@@ -13,8 +14,72 @@ if (!JWT_SECRET) {
 }
 
 const app = express();
-app.use(cors());
-app.use(express.json({ limit: '10mb' })); // Limite aumentado para permitir envio de fotos em Base64
+const allowedOrigins = (process.env.CORS_ORIGINS || '')
+  .split(',')
+  .map(origin => origin.trim())
+  .filter(Boolean);
+
+app.disable('x-powered-by');
+app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
+app.use(cors({
+  origin(origin, callback) {
+    // Aplicativos nativos não enviam Origin. Clientes web devem estar na allowlist.
+    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Origem não permitida pelo CORS.'));
+  },
+}));
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '4mb' }));
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: Number(process.env.LOGIN_RATE_LIMIT || 10),
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  message: { erro: 'Muitas tentativas de login. Aguarde alguns minutos e tente novamente.' },
+});
+const cadastroLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: Number(process.env.CADASTRO_RATE_LIMIT || 5),
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { erro: 'Muitos cadastros a partir deste endereço. Tente novamente mais tarde.' },
+});
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const DATA_RE = /^\d{4}-\d{2}-\d{2}$/;
+const HORA_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+const IMAGE_RE = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
+const MAX_IMAGE_BYTES = Number(process.env.MAX_IMAGE_BYTES || 2_000_000);
+
+const textoValido = (value, min, max) =>
+  typeof value === 'string' && value.trim().length >= min && value.trim().length <= max;
+const idValido = value => Number.isSafeInteger(Number(value)) && Number(value) > 0;
+const dataValida = value => {
+  if (typeof value !== 'string' || !DATA_RE.test(value)) return false;
+  const [ano, mes, dia] = value.split('-').map(Number);
+  const data = new Date(Date.UTC(ano, mes - 1, dia));
+  return data.getUTCFullYear() === ano && data.getUTCMonth() === mes - 1 && data.getUTCDate() === dia;
+};
+const imagemValida = value => {
+  if (value == null || value === '') return true;
+  if (typeof value !== 'string') return false;
+  if (/^https:\/\/[^\s]+$/i.test(value)) return value.length <= 2048;
+  const match = IMAGE_RE.exec(value);
+  if (!match) return false;
+  const padding = (match[2].match(/=*$/) || [''])[0].length;
+  return Math.floor(match[2].length * 3 / 4) - padding <= MAX_IMAGE_BYTES;
+};
+const validarEvento = ({ titulo, data_inicio, data_fim, horario }) => {
+  if (!textoValido(titulo, 1, 120)) return 'O título deve ter entre 1 e 120 caracteres.';
+  if (!dataValida(data_inicio) || !dataValida(data_fim) || data_inicio > data_fim) {
+    return 'Informe um período de datas válido.';
+  }
+  if (typeof horario !== 'string' || !HORA_RE.test(horario.slice(0, 5))) {
+    return 'Horário inválido. Utilize HH:mm.';
+  }
+  return null;
+};
 
 // === CONFIGURAÇÃO DO BANCO DE DADOS ===
 const pool = new Pool({
@@ -25,19 +90,39 @@ const pool = new Pool({
   port: Number(process.env.DB_PORT || 5432),
 
   ssl: process.env.DB_SSL === 'true'
-    ? { rejectUnauthorized: false }
+    ? {
+        rejectUnauthorized: true,
+        ...(process.env.DB_SSL_CA
+          ? { ca: process.env.DB_SSL_CA.replace(/\\n/g, '\n') }
+          : {}),
+      }
     : undefined,
 });
 
 // === ROTA DE CADASTRO DE USUÁRIO ===
-app.post('/cadastro', async (req, res) => {
+app.post('/cadastro', cadastroLimiter, async (req, res) => {
   try {
-    const { nome_completo, email, senha, congregacao_id, cpf, telefone, foto_perfil } = req.body;
+    const { nome_completo, senha, congregacao_id, foto_perfil } = req.body;
+    const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const cpf = typeof req.body.cpf === 'string' ? req.body.cpf.replace(/\D/g, '') : '';
+    const telefone = typeof req.body.telefone === 'string' ? req.body.telefone.replace(/\D/g, '') : '';
+
+    if (!textoValido(nome_completo, 3, 120) || !EMAIL_RE.test(email) || email.length > 254 ||
+        !textoValido(senha, 10, 128) || !/[A-Za-zÀ-ÿ]/.test(senha) || !/\d/.test(senha) ||
+        cpf.length !== 11 || telefone.length < 10 || telefone.length > 15 ||
+        !idValido(congregacao_id) || !imagemValida(foto_perfil)) {
+      return res.status(400).json({
+        erro: 'Dados inválidos. Use senha com ao menos 10 caracteres, letras e números, além de CPF, telefone e congregação válidos.',
+      });
+    }
 
     // 1. Verifica se o email ou CPF já existem no banco
-    const userExistente = await pool.query('SELECT * FROM usuarios WHERE email = $1 OR cpf = $2', [email, cpf]);
+    const userExistente = await pool.query(
+      'SELECT id FROM usuarios WHERE LOWER(email) = $1 OR cpf = $2 LIMIT 1',
+      [email, cpf]
+    );
     if (userExistente.rows.length > 0) {
-      return res.status(400).json({ erro: 'Este E-mail ou CPF já está cadastrado.' });
+      return res.status(409).json({ erro: 'Não foi possível concluir o cadastro com os dados informados.' });
     }
 
     // 2. Criptografa a senha antes de salvar
@@ -59,20 +144,27 @@ app.post('/cadastro', async (req, res) => {
     });
   } catch (erro) {
     console.error('Erro no cadastro:', erro);
+    if (erro?.code === '23505') {
+      return res.status(409).json({ erro: 'Não foi possível concluir o cadastro com os dados informados.' });
+    }
+    if (erro?.code === '23503' || erro?.code === '23514') {
+      return res.status(400).json({ erro: 'Os dados informados não são válidos.' });
+    }
     res.status(500).json({ erro: 'Erro interno ao cadastrar usuário' });
   }
 });
 
 // === ROTA DE LOGIN ===
-app.post('/login', async (req, res) => {
+app.post('/login', loginLimiter, async (req, res) => {
   try {
-    const { email, senha } = req.body;
-    if (typeof email !== 'string' || !email.trim() || typeof senha !== 'string' || !senha) {
+    const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+    const { senha } = req.body;
+    if (!EMAIL_RE.test(email) || email.length > 254 || typeof senha !== 'string' || !senha || senha.length > 128) {
       return res.status(400).json({ erro: 'Informe e-mail e senha.' });
     }
     
     // 1. Busca o usuário pelo email
-    const resultado = await pool.query('SELECT * FROM usuarios WHERE email = $1', [email]);
+    const resultado = await pool.query('SELECT * FROM usuarios WHERE LOWER(email) = $1', [email]);
     if (resultado.rows.length === 0) {
       return res.status(400).json({ erro: 'Email ou senha inválidos.' });
     }
@@ -168,7 +260,7 @@ const somenteGestores = (req, res, next) => {
 };
 
 const verificarAprovacao = (req, res, next) => {
-  if (req.usuario.nivel_acesso !== 'MASTER' && req.usuario.status_conta !== 'APROVADO') {
+  if (req.usuario.status_conta !== 'APROVADO') {
     return res.status(403).json({ erro: 'Sua conta ainda não foi aprovada pelo Master.' });
   }
   return next();
@@ -218,6 +310,13 @@ app.get('/congregacoes', async (req, res) => {
 app.get('/eventos', verificarToken, async (req, res) => {
   try {
     const { mes, ano } = req.query;
+    if ((mes == null) !== (ano == null)) {
+      return res.status(400).json({ erro: 'Informe mês e ano juntos.' });
+    }
+    if (mes != null && (!Number.isInteger(Number(mes)) || Number(mes) < 1 || Number(mes) > 12 ||
+        !Number.isInteger(Number(ano)) || Number(ano) < 2000 || Number(ano) > 2200)) {
+      return res.status(400).json({ erro: 'Mês ou ano inválido.' });
+    }
     let query = `
       SELECT e.*, c.nome as congregacao, u.nome_completo as criado_por
       FROM eventos e
@@ -247,14 +346,16 @@ app.post('/eventos', verificarToken, somenteGestores, async (req, res) => {
     const { titulo, data_inicio, data_fim, horario, congregacao_id, legenda } = req.body;
     const { id: usuario_id, nivel_acesso, congregacao_id: congregacaoAdmin } = req.usuario;
 
-    if (!titulo || !data_inicio || !data_fim || !horario) {
-      return res.status(400).json({ erro: "Preencha todos os campos obrigatórios (Título, Datas e Horário)." });
+    const erroValidacao = validarEvento(req.body);
+    if (erroValidacao) return res.status(400).json({ erro: erroValidacao });
+    if (legenda != null && !textoValido(legenda, 0, 2000)) {
+      return res.status(400).json({ erro: 'A legenda deve ter no máximo 2000 caracteres.' });
     }
 
     let congregacaoFinal = congregacao_id;
     if (nivel_acesso === 'ADMIN') {
       congregacaoFinal = congregacaoAdmin;
-    } else if (nivel_acesso === 'MASTER' && !congregacaoFinal) {
+    } else if (nivel_acesso === 'MASTER' && !idValido(congregacaoFinal)) {
       return res.status(400).json({ erro: "O Master deve selecionar uma congregação para o evento." });
     }
 
@@ -263,7 +364,7 @@ app.post('/eventos', verificarToken, somenteGestores, async (req, res) => {
       VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING *;
     `;
-    const valores = [titulo, data_inicio, data_fim, horario, congregacaoFinal, usuario_id, legenda || null];
+    const valores = [titulo.trim(), data_inicio, data_fim, horario.slice(0, 5), Number(congregacaoFinal), usuario_id, legenda?.trim() || null];
     const resultado = await pool.query(query, valores);
 
     res.status(201).json({ mensagem: "Evento criado com sucesso!", evento: resultado.rows[0] });
@@ -279,6 +380,13 @@ app.put('/eventos/:id', verificarToken, somenteGestores, async (req, res) => {
     const { titulo, data_inicio, data_fim, horario, congregacao_id, legenda } = req.body;
     const { nivel_acesso, congregacao_id: congregacaoAdmin } = req.usuario;
 
+    if (!idValido(eventoId)) return res.status(400).json({ erro: 'Evento inválido.' });
+    const erroValidacao = validarEvento(req.body);
+    if (erroValidacao) return res.status(400).json({ erro: erroValidacao });
+    if (legenda != null && !textoValido(legenda, 0, 2000)) {
+      return res.status(400).json({ erro: 'A legenda deve ter no máximo 2000 caracteres.' });
+    }
+
     const eventoRes = await pool.query('SELECT * FROM eventos WHERE id = $1', [eventoId]);
     if (eventoRes.rowCount === 0) {
       return res.status(404).json({ erro: "Evento não encontrado." });
@@ -289,7 +397,10 @@ app.put('/eventos/:id', verificarToken, somenteGestores, async (req, res) => {
       return res.status(403).json({ erro: "Admin só pode editar eventos da sua própria congregação." });
     }
 
-    let congregacaoFinal = nivel_acesso === 'MASTER' ? congregacao_id : congregacaoAdmin;
+    const congregacaoFinal = nivel_acesso === 'MASTER' ? congregacao_id : congregacaoAdmin;
+    if (!idValido(congregacaoFinal)) {
+      return res.status(400).json({ erro: 'Selecione uma congregação válida.' });
+    }
 
     const query = `
       UPDATE eventos 
@@ -297,7 +408,7 @@ app.put('/eventos/:id', verificarToken, somenteGestores, async (req, res) => {
       WHERE id = $7
       RETURNING *;
     `;
-    const valores = [titulo, data_inicio, data_fim, horario, congregacaoFinal, legenda || null, eventoId];
+    const valores = [titulo.trim(), data_inicio, data_fim, horario.slice(0, 5), Number(congregacaoFinal), legenda?.trim() || null, eventoId];
     const resultado = await pool.query(query, valores);
 
     res.json({ mensagem: "Evento atualizado com sucesso!", evento: resultado.rows[0] });
@@ -311,6 +422,8 @@ app.delete('/eventos/:id', verificarToken, somenteGestores, async (req, res) => 
   try {
     const eventoId = req.params.id;
     const { nivel_acesso, congregacao_id: congregacaoAdmin } = req.usuario;
+
+    if (!idValido(eventoId)) return res.status(400).json({ erro: 'Evento inválido.' });
 
     const eventoRes = await pool.query('SELECT * FROM eventos WHERE id = $1', [eventoId]);
     if (eventoRes.rowCount === 0) {
@@ -342,8 +455,9 @@ app.get('/usuarios', verificarToken, somenteGestores, async (req, res) => {
       return res.status(403).json({ erro: "Acesso negado." });
     }
 
+    const camposSensiveis = nivel_acesso === 'MASTER' ? ', u.cpf, u.telefone' : '';
     let query = `
-      SELECT u.id, u.nome_completo, u.nome_exibicao, u.email, u.nivel_acesso, u.status_conta, u.cpf, u.telefone, u.foto_perfil, c.nome as congregacao, c.id as congregacao_id
+      SELECT u.id, u.nome_completo, u.nome_exibicao, u.email, u.nivel_acesso, u.status_conta, u.foto_perfil${camposSensiveis}, c.nome as congregacao, c.id as congregacao_id
       FROM usuarios u
       JOIN congregacoes c ON u.congregacao_id = c.id
     `;
@@ -371,7 +485,7 @@ app.put('/usuarios/:id/status', verificarToken, somenteGestores, async (req, res
     const { status_conta } = req.body;
     const { nivel_acesso, congregacao_id } = req.usuario;
 
-    if (!['APROVADO', 'PENDENTE', 'RECUSADO', 'BLOQUEADO'].includes(status_conta)) {
+    if (!idValido(id) || !['APROVADO', 'PENDENTE', 'RECUSADO', 'BLOQUEADO'].includes(status_conta)) {
       return res.status(400).json({ erro: 'Status de conta inválido.' });
     }
     if (String(id) === String(req.usuario.id)) {
@@ -399,13 +513,14 @@ app.put('/usuarios/:id/nivel', verificarToken, somenteMaster, async (req, res) =
     const { id } = req.params;
     const { nivel_acesso } = req.body;
     
-    if (!['MASTER', 'ADMIN', 'MEMBRO'].includes(nivel_acesso)) {
+    if (!idValido(id) || !['MASTER', 'ADMIN', 'MEMBRO'].includes(nivel_acesso)) {
       return res.status(400).json({ erro: 'Nível de acesso inválido.' });
     }
     if (String(id) === String(req.usuario.id)) {
       return res.status(403).json({ erro: 'Você não pode alterar o próprio nível de acesso.' });
     }
     const query = `UPDATE usuarios SET nivel_acesso = $1 WHERE id = $2
+      AND ($1 = 'MEMBRO' OR status_conta = 'APROVADO')
       RETURNING id, nome_completo, nome_exibicao, email, nivel_acesso, status_conta, congregacao_id;`;
     const resultado = await pool.query(query, [nivel_acesso, id]);
     if (!resultado.rowCount) return res.status(404).json({ erro: 'Usuário não encontrado.' });
@@ -423,7 +538,10 @@ app.put('/usuarios/:id/congregacao', verificarToken, somenteMaster, async (req, 
     const { id } = req.params;
     const { congregacao_id } = req.body;
     
-    const congCheck = await pool.query('SELECT * FROM congregacoes WHERE id = $1', [congregacao_id]);
+    if (!idValido(id) || !idValido(congregacao_id)) {
+      return res.status(400).json({ erro: 'Usuário ou congregação inválida.' });
+    }
+    const congCheck = await pool.query('SELECT id FROM congregacoes WHERE id = $1', [congregacao_id]);
     if (congCheck.rowCount === 0) {
       return res.status(404).json({ erro: "Congregação não encontrada." });
     }
@@ -451,13 +569,18 @@ app.put('/usuarios/perfil', verificarToken, async (req, res) => {
     const usuario_id = req.usuario.id;
     const { nome_exibicao, bio, foto_perfil } = req.body;
 
+    if (!textoValido(nome_exibicao, 2, 120) ||
+        (bio != null && !textoValido(bio, 0, 500)) || !imagemValida(foto_perfil)) {
+      return res.status(400).json({ erro: 'Nome, biografia ou foto inválidos.' });
+    }
+
     const query = `
       UPDATE usuarios 
       SET nome_exibicao = $1, bio = $2, foto_perfil = $3
       WHERE id = $4
       RETURNING id, nome_completo, nome_exibicao, email, nivel_acesso, status_conta, congregacao_id, foto_perfil, telefone, cpf, bio;
     `;
-    const valores = [nome_exibicao, bio, foto_perfil, usuario_id];
+    const valores = [nome_exibicao.trim(), bio?.trim() || null, foto_perfil || null, usuario_id];
     const resultado = await pool.query(query, valores);
 
     res.json({ 
@@ -480,8 +603,12 @@ app.post('/mural', verificarToken, somenteGestores, async (req, res) => {
     const usuario_id = req.usuario.id;
     const congregacao_id = req.usuario.congregacao_id || null; 
 
-    if (!data_inicio || !data_fim) {
-      return res.status(400).json({ erro: "É necessário informar a data de início e término do evento." });
+    if (!textoValido(titulo, 1, 120) || !dataValida(data_inicio) || !dataValida(data_fim) ||
+        data_inicio > data_fim || (descricao != null && !textoValido(descricao, 0, 2000)) ||
+        (local != null && !textoValido(local, 0, 180)) || tipo_midia !== 'imagem' || !midia || !imagemValida(midia)) {
+      return res.status(400).json({
+        erro: 'Preencha título, período e uma imagem JPEG, PNG ou WebP válida.',
+      });
     }
 
     const query = `
@@ -489,7 +616,17 @@ app.post('/mural', verificarToken, somenteGestores, async (req, res) => {
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *;
     `;
-    const valores = [usuario_id, congregacao_id, titulo, descricao, local, tipo_midia, midia, data_inicio, data_fim];
+    const valores = [
+      usuario_id,
+      congregacao_id,
+      titulo.trim(),
+      descricao?.trim() || null,
+      local?.trim() || null,
+      tipo_midia,
+      midia,
+      data_inicio,
+      data_fim,
+    ];
     const resultado = await pool.query(query, valores);
 
     res.status(201).json({ mensagem: "Post criado com sucesso!", post: resultado.rows[0] });
@@ -501,8 +638,6 @@ app.post('/mural', verificarToken, somenteGestores, async (req, res) => {
 
 app.get('/mural', verificarToken, async (req, res) => {
   try {
-    await pool.query(`DELETE FROM mural_eventos WHERE data_fim < CURRENT_DATE;`);
-
     const usuario_atual_id = req.usuario.id;
 
     const query = `
@@ -511,6 +646,7 @@ app.get('/mural', verificarToken, async (req, res) => {
         EXISTS (SELECT 1 FROM mural_curtidas mc WHERE mc.post_id = m.id AND mc.usuario_id = $1) as curtiu_por_mim
       FROM mural_eventos m
       JOIN usuarios u ON m.usuario_id = u.id
+      WHERE m.data_fim >= CURRENT_DATE
       ORDER BY m.data_inicio ASC, m.criado_em DESC;
     `;
     const resultado = await pool.query(query, [usuario_atual_id]);
@@ -570,18 +706,24 @@ app.post('/mural/:id/curtir', verificarToken, verificarAprovacao, async (req, re
   try {
     const post_id = req.params.id;
     const usuario_id = req.usuario.id;
+    if (!idValido(post_id)) return res.status(400).json({ erro: 'Post inválido.' });
 
-    const check = await pool.query('SELECT * FROM mural_curtidas WHERE usuario_id = $1 AND post_id = $2', [usuario_id, post_id]);
-
-    if (check.rows.length > 0) {
-      await pool.query('DELETE FROM mural_curtidas WHERE usuario_id = $1 AND post_id = $2', [usuario_id, post_id]);
-      return res.json({ curtiu: false, mensagem: "Curtida removida." });
-    } else {
-      await pool.query('INSERT INTO mural_curtidas (usuario_id, post_id) VALUES ($1, $2)', [usuario_id, post_id]);
-      return res.json({ curtiu: true, mensagem: "Post curtido!" });
-    }
+    const resultado = await pool.query(`
+      WITH removida AS (
+        DELETE FROM mural_curtidas WHERE usuario_id = $1 AND post_id = $2 RETURNING 1
+      ), inserida AS (
+        INSERT INTO mural_curtidas (usuario_id, post_id)
+        SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM removida)
+        ON CONFLICT (usuario_id, post_id) DO NOTHING
+        RETURNING 1
+      )
+      SELECT EXISTS (SELECT 1 FROM inserida) AS curtiu;
+    `, [usuario_id, post_id]);
+    const curtiu = Boolean(resultado.rows[0]?.curtiu);
+    return res.json({ curtiu, mensagem: curtiu ? 'Post curtido!' : 'Curtida removida.' });
   } catch (erro) {
     console.error("Erro ao curtir post:", erro);
+    if (erro?.code === '23503') return res.status(404).json({ erro: 'Post não encontrado.' });
     res.status(500).json({ erro: "Erro interno ao processar curtida." });
   }
 });
@@ -617,8 +759,18 @@ app.post('/mural/:id/comentarios', verificarToken, verificarAprovacao, async (re
     const usuario_id = req.usuario.id;
     const { texto, parent_id } = req.body;
 
-    if (!texto || !texto.trim()) {
+    if (!idValido(post_id) || !textoValido(texto, 1, 2000) || (parent_id != null && !idValido(parent_id))) {
       return res.status(400).json({ erro: "O comentário não pode estar vazio." });
+    }
+
+    if (parent_id != null) {
+      const parent = await pool.query(
+        'SELECT id FROM mural_comentarios WHERE id = $1 AND post_id = $2',
+        [parent_id, post_id]
+      );
+      if (!parent.rowCount) {
+        return res.status(400).json({ erro: 'O comentário respondido não pertence a esta publicação.' });
+      }
     }
 
     const query = `
@@ -638,6 +790,7 @@ app.post('/mural/:id/comentarios', verificarToken, verificarAprovacao, async (re
     res.status(201).json(comentarioCriado.rows[0]);
   } catch (erro) {
     console.error("Erro ao criar comentário:", erro);
+    if (erro?.code === '23503') return res.status(404).json({ erro: 'Publicação não encontrada.' });
     res.status(500).json({ erro: "Erro ao publicar comentário." });
   }
 });
@@ -647,17 +800,23 @@ app.post('/comentarios/:id/curtir', verificarToken, verificarAprovacao, async (r
     const comentario_id = req.params.id;
     const usuario_id = req.usuario.id;
 
-    const check = await pool.query('SELECT * FROM mural_comentario_curtidas WHERE usuario_id = $1 AND comentario_id = $2', [usuario_id, comentario_id]);
-
-    if (check.rows.length > 0) {
-      await pool.query('DELETE FROM mural_comentario_curtidas WHERE usuario_id = $1 AND comentario_id = $2', [usuario_id, comentario_id]);
-      return res.json({ curtiu: false });
-    } else {
-      await pool.query('INSERT INTO mural_comentario_curtidas (usuario_id, comentario_id) VALUES ($1, $2)', [usuario_id, comentario_id]);
-      return res.json({ curtiu: true });
-    }
+    if (!idValido(comentario_id)) return res.status(400).json({ erro: 'Comentário inválido.' });
+    const resultado = await pool.query(`
+      WITH removida AS (
+        DELETE FROM mural_comentario_curtidas
+        WHERE usuario_id = $1 AND comentario_id = $2 RETURNING 1
+      ), inserida AS (
+        INSERT INTO mural_comentario_curtidas (usuario_id, comentario_id)
+        SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM removida)
+        ON CONFLICT (usuario_id, comentario_id) DO NOTHING
+        RETURNING 1
+      )
+      SELECT EXISTS (SELECT 1 FROM inserida) AS curtiu;
+    `, [usuario_id, comentario_id]);
+    return res.json({ curtiu: Boolean(resultado.rows[0]?.curtiu) });
   } catch (erro) {
     console.error("Erro ao curtir comentário:", erro);
+    if (erro?.code === '23503') return res.status(404).json({ erro: 'Comentário não encontrado.' });
     res.status(500).json({ erro: "Erro ao curtir comentário." });
   }
 });
@@ -893,6 +1052,10 @@ app.put('/gestao-datas/:id/marcador', verificarToken, somenteMaster, async (req,
     const { marcador } = req.body;
     const master_id = req.usuario.id;
 
+    if (!idValido(id) || !['NORMAL', 'REVISAR', 'CONFLITO'].includes(marcador)) {
+      return res.status(400).json({ erro: 'Marcador inválido.' });
+    }
+
     const query = `
       UPDATE gestao_datas_rascunho 
       SET marcador = $1 
@@ -916,7 +1079,12 @@ app.delete('/gestao-datas/:id', verificarToken, somenteMaster, async (req, res) 
     const { id } = req.params;
     const master_id = req.usuario.id;
 
-    await pool.query('DELETE FROM gestao_datas_rascunho WHERE id = $1 AND master_id = $2', [id, master_id]);
+    if (!idValido(id)) return res.status(400).json({ erro: 'Item inválido.' });
+    const resultado = await pool.query(
+      'DELETE FROM gestao_datas_rascunho WHERE id = $1 AND master_id = $2 RETURNING id',
+      [id, master_id]
+    );
+    if (!resultado.rowCount) return res.status(404).json({ erro: 'Item não encontrado.' });
     res.json({ mensagem: "Item removido do planejamento." });
   } catch (erro) {
     console.error("Erro ao excluir item do planejamento:", erro);
@@ -970,27 +1138,31 @@ app.post('/gestao-datas/publicar', verificarToken, somenteMaster, async (req, re
   }
 });
 
-// Migração compatível: eventos antigos recebem duração padrão de 60 minutos.
-// IF NOT EXISTS evita alterar ou duplicar dados já existentes.
+app.use((erro, _req, res, next) => {
+  if (erro?.type === 'entity.too.large') {
+    return res.status(413).json({ erro: 'O conteúdo enviado excede o limite permitido.' });
+  }
+  if (erro instanceof SyntaxError && 'body' in erro) {
+    return res.status(400).json({ erro: 'JSON inválido.' });
+  }
+  if (erro?.message === 'Origem não permitida pelo CORS.') {
+    return res.status(403).json({ erro: erro.message });
+  }
+  return next(erro);
+});
+
 const iniciarServidor = async () => {
   try {
-    await pool.query(`
-      ALTER TABLE gestao_datas_rascunho
-      ADD COLUMN IF NOT EXISTS duracao_minutos INTEGER NOT NULL DEFAULT 60;
-    `);
-    await pool.query(`
-      ALTER TABLE eventos
-      ADD COLUMN IF NOT EXISTS duracao_minutos INTEGER NOT NULL DEFAULT 60;
-    `);
+    await pool.query('SELECT 1');
 
     const PORT = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-  console.log(`✅ Servidor rodando na porta ${PORT}!`);
-});
+    app.listen(PORT, () => {
+      console.log(`✅ Servidor rodando na porta ${PORT}!`);
+    });
 
   } catch (erro) {
-    console.error('❌ Não foi possível preparar as colunas de duração:', erro);
+    console.error('❌ Não foi possível conectar ao banco. Execute npm run db:migrate:', erro);
     process.exit(1);
   }
 };

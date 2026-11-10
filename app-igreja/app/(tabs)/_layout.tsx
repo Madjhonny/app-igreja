@@ -13,21 +13,24 @@ export default function TabLayout() {
         name="agenda"
         options={{
           title: 'Agenda',
-          tabBarIcon: ({ color }) => <Ionicons name="calendar" size={24} color={color} />,
+          tabBarAccessibilityLabel: 'Agenda',
+          tabBarIcon: ({ color }) => <Ionicons name="calendar" size={24} color={typeof color === 'string' ? color : '#a3a3a3'} />,
         }}
       />
       <Tabs.Screen
         name="explore"
         options={{
           title: 'Eventos',
-          tabBarIcon: ({ color }) => <Ionicons name="megaphone" size={24} color={color ?? '#a3a3a3'} />,
+          tabBarAccessibilityLabel: 'Eventos',
+          tabBarIcon: ({ color }) => <Ionicons name="megaphone" size={24} color={typeof color === 'string' ? color : '#a3a3a3'} />,
         }}
       />
       <Tabs.Screen
         name="perfil"
         options={{
           title: 'Perfil',
-          tabBarIcon: ({ color }) => <Ionicons name="person" size={24} color={color} />,
+          tabBarAccessibilityLabel: 'Perfil',
+          tabBarIcon: ({ color }) => <Ionicons name="person" size={24} color={typeof color === 'string' ? color : '#a3a3a3'} />,
         }}
       />
     </Tabs>

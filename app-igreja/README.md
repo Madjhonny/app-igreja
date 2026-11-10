@@ -1,50 +1,68 @@
-# Welcome to your Expo app 👋
+# App Agenda ADP
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Cliente Expo SDK 58 para Android, iOS e web. Usa Expo Router, React Native, TypeScript estrito e uma API HTTP configurável por ambiente.
 
-## Get started
-
-1. Install dependencies
-
-   ```bash
-   npm install
-   ```
-
-2. Start the app
-
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## Instalação
 
 ```bash
-npm run reset-project
+npm ci
+cp .env.example .env
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Configure a API:
 
-## Learn more
+```dotenv
+EXPO_PUBLIC_API_URL=http://localhost:3000
+```
 
-To learn more about developing your project with Expo, look at the following resources:
+Em dispositivo físico, `localhost` aponta para o próprio aparelho. Use um endereço acessível na rede ou uma API HTTPS. Não coloque segredos em variáveis `EXPO_PUBLIC_*`.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+## Execução
 
-## Join the community
+```bash
+npm start          # abre o servidor de desenvolvimento Expo
+npm run android    # Android
+npm run ios        # iOS
+npm run web        # navegador
+```
 
-Join our community of developers creating universal apps.
+## Organização
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+- `app/`: rotas e telas do Expo Router.
+- `components/`: componentes compartilhados e monitor global de sessão.
+- `hooks/`: hooks de tema e sessão.
+- `services/session.ts`: URL da API, requisições autenticadas e sincronização da sessão.
+- `constants/`: tema visual.
+- `assets/`: ícones e imagens do aplicativo.
+
+## Sessão e permissões
+
+O usuário precisa autenticar-se para acessar as áreas internas. O app pode adaptar a interface ao papel atual, mas toda autorização é confirmada novamente pela API.
+
+Quando a API retorna sessão expirada, bloqueada ou revogada, o monitor global limpa apenas a sessão correspondente e direciona o usuário ao login. Novas chamadas devem usar os helpers de `services/session.ts`; não repita URLs da API nas telas.
+
+## Mídia
+
+Publicações aceitam somente os formatos suportados e validados pela API. URIs locais (`file://`) nunca devem ser persistidas como mídia compartilhável. Para adicionar vídeos no futuro, use upload para armazenamento de objetos e persista apenas uma URL HTTPS validada.
+
+## Qualidade
+
+Antes de abrir um pull request:
+
+```bash
+npm run lint
+npx tsc --noEmit
+EXPO_NO_TELEMETRY=1 npx expo export --platform web --output-dir /tmp/agenda-adp-web
+```
+
+Novos fluxos devem incluir estados de carregamento, erro e tentativa novamente, além de rótulos de acessibilidade em controles somente por ícone.
+
+## Build com EAS
+
+```bash
+npx eas build --profile development --platform android
+npx eas build --profile preview --platform android
+npx eas build --profile production --platform all
+```
+
+Os identificadores nativos estão em `app.json`; perfis de build e submissão ficam em `eas.json`. Consulte sempre a [documentação do Expo SDK 58](https://docs.expo.dev/versions/v58.0.0/) ao alterar APIs nativas.

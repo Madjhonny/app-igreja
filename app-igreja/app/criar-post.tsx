@@ -1,17 +1,16 @@
-import React, { useState, useEffect } from 'react';
+import { authenticatedFetch } from '@/services/session';
+import React, { useState } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Image, KeyboardAvoidingView, Platform, Modal } from 'react-native';
 import { router, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function TelaCriarPost() {
-  const [token, setToken] = useState('');
   const [titulo, setTitulo] = useState('');
   const [descricao, setDescricao] = useState('');
   const [local, setLocal] = useState('');
   const [midia, setMidia] = useState<string | null>(null);
-  const [tipoMidia, setTipoMidia] = useState<'imagem' | 'video' | null>(null);
+  const [tipoMidia, setTipoMidia] = useState<'imagem' | null>(null);
   const [carregando, setCarregando] = useState(false);
 
   // Estados do Calendário e Datas
@@ -21,24 +20,15 @@ export default function TelaCriarPost() {
   const [mesAtual, setMesAtual] = useState(new Date().getMonth());
   const [anoAtual, setAnoAtual] = useState(new Date().getFullYear());
 
-  useEffect(() => {
-    carregarToken();
-  }, []);
-
-  const carregarToken = async () => {
-    const userToken = await AsyncStorage.getItem('userToken');
-    if (userToken) setToken(userToken);
-  };
-
   const escolherMidia = async () => {
     const permissao = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permissao.granted) {
-      Alert.alert('Permissão negada', 'Precisamos de acesso à galeria para anexar mídia.');
+      Alert.alert('Permissão negada', 'Precisamos de acesso à galeria para anexar uma imagem.');
       return;
     }
 
     const resultado = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images', 'videos'], 
+      mediaTypes: ['images'],
       allowsEditing: true,
       quality: 0.7,
       base64: true,
@@ -46,15 +36,17 @@ export default function TelaCriarPost() {
 
     if (!resultado.canceled && resultado.assets[0]) {
       const asset = resultado.assets[0];
-      const isVideo = asset.type === 'video';
-      setTipoMidia(isVideo ? 'video' : 'imagem');
-      
-      if (asset.base64) {
-        const prefixo = isVideo ? 'data:video/mp4;base64,' : 'data:image/jpeg;base64,';
-        setMidia(`${prefixo}${asset.base64}`);
-      } else {
-        setMidia(asset.uri);
+      if (!asset.base64) {
+        Alert.alert('Imagem inválida', 'Não foi possível preparar a imagem para envio.');
+        return;
       }
+      const tamanhoAproximado = Math.ceil(asset.base64.length * 0.75);
+      if (tamanhoAproximado > 1_500_000) {
+        Alert.alert('Imagem muito grande', 'Escolha uma imagem de até 1,5 MB.');
+        return;
+      }
+      setTipoMidia('imagem');
+      setMidia(`data:image/jpeg;base64,${asset.base64}`);
     }
   };
 
@@ -127,12 +119,9 @@ export default function TelaCriarPost() {
 
     setCarregando(true);
     try {
-      const resposta = await fetch('https://app-igreja-eks0.onrender.com/mural', { // ⚠️ Ajuste seu IP se necessário
+      const resposta = await authenticatedFetch('/mural', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           titulo, 
           descricao, 
@@ -153,7 +142,7 @@ export default function TelaCriarPost() {
       } else {
         Alert.alert('Erro', dados.erro || 'Falha ao publicar no mural.');
       }
-    } catch (error) {
+    } catch {
       Alert.alert('Erro', 'Não foi possível conectar ao servidor.');
     } finally {
       setCarregando(false);
@@ -181,11 +170,6 @@ export default function TelaCriarPost() {
             {midia ? (
               <View style={styles.midiaPreviewContainer}>
                 <Image source={{ uri: midia }} style={styles.midiaPreview} />
-                {tipoMidia === 'video' && (
-                  <View style={styles.playIconOverlay}>
-                    <Ionicons name="play-circle" size={50} color="rgba(255,255,255,0.8)" />
-                  </View>
-                )}
                 <View style={styles.changeMidiaButton}>
                   <Ionicons name="pencil" size={16} color="#fff" />
                   <Text style={styles.changeMidiaText}>Trocar</Text>

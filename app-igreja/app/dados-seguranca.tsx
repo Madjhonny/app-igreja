@@ -1,26 +1,25 @@
-import React, { useState, useEffect } from 'react';
+import { useSessionUser } from '@/hooks/use-session-user';
+import React, { useCallback, useEffect } from 'react';
 import { StyleSheet, Text, View, TouchableOpacity, ScrollView } from 'react-native';
 import { router, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { refreshSession } from '@/services/session';
 
 export default function TelaDadosSeguranca() {
-  const [usuario, setUsuario] = useState<any>(null);
+  const [usuario, setUsuario] = useSessionUser();
+
+  const carregarDados = useCallback(async () => {
+    try {
+      const user = await refreshSession();
+      if (user) setUsuario(user);
+    } catch {
+      // O monitor global de sessão exibe a falha de conexão e oferece nova tentativa.
+    }
+  }, [setUsuario]);
 
   useEffect(() => {
-    carregarDados();
-  }, []);
-
-  const carregarDados = async () => {
-    try {
-      const userData = await AsyncStorage.getItem('userData');
-      if (userData) {
-        setUsuario(JSON.parse(userData));
-      }
-    } catch (error) {
-      console.error('Erro ao carregar dados cadastrais:', error);
-    }
-  };
+    void Promise.resolve().then(carregarDados);
+  }, [carregarDados]);
 
   return (
     <ScrollView style={styles.container}>

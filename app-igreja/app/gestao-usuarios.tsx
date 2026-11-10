@@ -1,29 +1,23 @@
+import { useSessionUser } from '@/hooks/use-session-user';
+import { authenticatedFetch, getStoredUser, getSessionToken } from '@/services/session';
 import React, { useState, useCallback } from 'react';
 import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { router, useFocusEffect, Stack } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function TelaGestaoUsuarios() {
   const [usuarios, setUsuarios] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(false);
-  const [usuarioLogado, setUsuarioLogado] = useState<any>(null);
+  const [usuarioLogado, setUsuarioLogado] = useSessionUser();
 
-  useFocusEffect(useCallback(() => { carregarDados(); }, []));
-
-  const carregarDados = async () => {
+  const carregarDados = useCallback(async () => {
     setCarregando(true);
     try {
-      const token = await AsyncStorage.getItem('userToken');
-      const userData = await AsyncStorage.getItem('userData');
-      if (!token || !userData) return router.replace('/');
-
-      const parsedUser = JSON.parse(userData);
+      const [token, parsedUser] = await Promise.all([getSessionToken(), getStoredUser()]);
+      if (!token || !parsedUser) return router.replace('/login');
       setUsuarioLogado(parsedUser);
 
-      const resposta = await fetch('https://app-igreja-eks0.onrender.com/usuarios', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const resposta = await authenticatedFetch('/usuarios');
 
       if (resposta.ok) {
         const dados = await resposta.json();
@@ -39,12 +33,16 @@ export default function TelaGestaoUsuarios() {
       } else {
         router.back();
       }
-    } catch (error) {
+    } catch {
       Alert.alert('Erro', 'Falha na conexão com o servidor.');
     } finally {
       setCarregando(false);
     }
-  };
+  }, [setUsuarioLogado]);
+
+  useFocusEffect(useCallback(() => {
+    void carregarDados();
+  }, [carregarDados]));
 
   // Extrai dinamicamente as congregações e conta os membros/pendentes
   const congregacoesUnicas = Array.from(new Set(usuarios.map(u => u.congregacao))).map(nome => {

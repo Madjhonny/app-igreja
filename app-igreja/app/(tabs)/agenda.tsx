@@ -1,8 +1,9 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, Modal, Alert, ActivityIndicator, Animated, Easing, PanResponder, Dimensions } from 'react-native';
+import { authenticatedFetch, canManage, getStoredUser } from '@/services/session';
+import { useSessionUser } from '@/hooks/use-session-user';
+import React, { useState, useCallback, useRef } from 'react';
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, Modal, Alert, ActivityIndicator, Dimensions } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Tokens visuais (somente aparência)
 const cores = {
@@ -125,13 +126,12 @@ const PaginaMes = React.memo(function PaginaMes({ ano, mes, eventos, largura, es
 });
 
 export default function TelaAgenda() {
-  const [usuario, setUsuario] = useState<any>(null);
-  const [token, setToken] = useState('');
-  
+  const [usuario, setUsuario] = useSessionUser();
   const [mesAtual, setMesAtual] = useState(new Date().getMonth());
   const [anoAtual, setAnoAtual] = useState(new Date().getFullYear());
   const [eventosDoMes, setEventosDoMes] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(false);
+  const [erroCarregamento, setErroCarregamento] = useState('');
 
   // Garante que só a resposta da busca mais recente seja aplicada (evita corrida em trocas rápidas de mês)
   const ultimaBuscaRef = useRef(0);
@@ -140,38 +140,39 @@ export default function TelaAgenda() {
   const [modalDetalhesVisivel, setModalDetalhesVisivel] = useState(false);
   const [eventoSelecionado, setEventoSelecionado] = useState<any>(null);
 
-  useFocusEffect(
-    useCallback(() => {
-      carregarUsuario();
-      buscarEventosDoMes(mesAtual + 1, anoAtual);
-    }, [mesAtual, anoAtual])
-  );
+  const carregarUsuario = useCallback(async () => {
+    const user = await getStoredUser();
+    if (user) setUsuario(user);
+  }, [setUsuario]);
 
-  const carregarUsuario = async () => {
-    const userData = await AsyncStorage.getItem('userData');
-    const userToken = await AsyncStorage.getItem('userToken');
-    if (userData) setUsuario(JSON.parse(userData));
-    if (userToken) setToken(userToken);
-  };
-
-  const buscarEventosDoMes = async (mes: number, ano: number) => {
+  const buscarEventosDoMes = useCallback(async (mes: number, ano: number) => {
     const idBusca = ++ultimaBuscaRef.current;
     setCarregando(true);
+    setErroCarregamento('');
     try {
-      const userToken = await AsyncStorage.getItem('userToken');
-      const resposta = await fetch(`https://app-igreja-eks0.onrender.com/eventos?mes=${mes}&ano=${ano}`, {
-        headers: { 'Authorization': `Bearer ${userToken || ''}` }
-      });
+      const resposta = await authenticatedFetch(`/eventos?mes=${mes}&ano=${ano}`);
       if (resposta.ok) {
         const dados = await resposta.json();
         if (idBusca === ultimaBuscaRef.current) setEventosDoMes(dados);
+      } else if (idBusca === ultimaBuscaRef.current) {
+        const dados = await resposta.json().catch(() => ({}));
+        setErroCarregamento(dados.erro || 'Não foi possível carregar a agenda.');
       }
-    } catch (error) {
-      console.error("Erro ao buscar eventos:", error);
+    } catch {
+      if (idBusca === ultimaBuscaRef.current) {
+        setErroCarregamento('Falha de conexão. Verifique sua internet e tente novamente.');
+      }
     } finally {
       if (idBusca === ultimaBuscaRef.current) setCarregando(false);
     }
-  };
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void carregarUsuario();
+      void buscarEventosDoMes(mesAtual + 1, anoAtual);
+    }, [anoAtual, buscarEventosDoMes, carregarUsuario, mesAtual])
+  );
 
   const mudarMes = (direcao: number) => {
     let novoMes = mesAtual + direcao;
@@ -187,94 +188,8 @@ export default function TelaAgenda() {
     setAnoAtual(novoAno);
   };
 
-  // ====================================================================
-  // NAVEGAÇÃO ENTRE MESES POR GESTO + ANIMAÇÃO DE DESLIZAMENTO
-  // Setas e gesto chamam a mesma mudarMes(); a animação segue o mês atual.
-  // ====================================================================
+  // A largura é medida em tempo de execução para manter a grade responsiva.
   const [larguraCalendario, setLarguraCalendario] = useState(() => Math.min(Dimensions.get('window').width - 40, 640) - 38);
-  const [rolagemHabilitada, setRolagemHabilitada] = useState(true);
-
-  const trilhoX = useRef(new Animated.Value(0)).current;
-  const indiceAtual = anoAtual * 12 + mesAtual; // índice absoluto do mês exibido
-  const ancoraRef = useRef(indiceAtual);        // mês inicial = posição 0 do trilho
-  const indiceRef = useRef(indiceAtual);
-  indiceRef.current = indiceAtual;
-  const larguraRef = useRef(larguraCalendario);
-  larguraRef.current = larguraCalendario;
-  const mudarMesRef = useRef(mudarMes);
-  mudarMesRef.current = mudarMes;
-
-  const posInicioRef = useRef(0);
-  const dxRef = useRef(0);
-  const lendoPosicaoRef = useRef(false);
-  const indiceAnimadoRef = useRef(indiceAtual);
-
-  const animarPara = (valor: number, duracao: number) => {
-    Animated.timing(trilhoX, {
-      toValue: valor,
-      duration: duracao,
-      easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
-    }).start();
-  };
-
-  // Sempre que o mês muda (seta ou gesto), o trilho desliza até a posição do novo mês
-  useEffect(() => {
-    if (indiceAnimadoRef.current === indiceAtual) return;
-    indiceAnimadoRef.current = indiceAtual;
-    animarPara(-(indiceAtual - ancoraRef.current) * larguraRef.current, 260);
-  }, [indiceAtual]);
-
-  // Se a largura do calendário mudar (ex.: rotação), reposiciona sem animar
-  useEffect(() => {
-    trilhoX.stopAnimation();
-    trilhoX.setValue(-(indiceRef.current - ancoraRef.current) * larguraCalendario);
-  }, [larguraCalendario]);
-
-  const finalizarGesto = (vx: number) => {
-    setRolagemHabilitada(true);
-    const w = larguraRef.current;
-    const baseAtual = -(indiceRef.current - ancoraRef.current) * w;
-    const deslocamento = posInicioRef.current + dxRef.current - baseAtual; // < 0: arrastou para a esquerda
-    const limite = w * 0.2;
-    const rapido = Math.abs(vx) > 0.3;
-
-    let direcao = 0;
-    if (deslocamento < -limite || (rapido && vx < 0 && deslocamento < 0)) direcao = 1;
-    else if (deslocamento > limite || (rapido && vx > 0 && deslocamento > 0)) direcao = -1;
-
-    if (direcao !== 0) {
-      mudarMesRef.current(direcao); // o efeito acima conclui a animação
-    } else {
-      animarPara(baseAtual, 200);   // não atingiu o limite: volta suavemente
-    }
-  };
-
-  const panResponder = useRef(
-    PanResponder.create({
-      // Só assume o gesto quando o movimento é claramente horizontal (preserva a rolagem vertical)
-      onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 8 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
-      onPanResponderTerminationRequest: () => false,
-      onPanResponderGrant: () => {
-        setRolagemHabilitada(false);
-        dxRef.current = 0;
-        lendoPosicaoRef.current = true;
-        // Interrompe uma animação em andamento e continua o arraste de onde ela estava
-        trilhoX.stopAnimation((valor) => {
-          posInicioRef.current = valor;
-          lendoPosicaoRef.current = false;
-          trilhoX.setValue(valor + dxRef.current);
-        });
-      },
-      onPanResponderMove: (_, g) => {
-        const w = larguraRef.current;
-        dxRef.current = Math.max(-w, Math.min(w, g.dx));
-        if (!lendoPosicaoRef.current) trilhoX.setValue(posInicioRef.current + dxRef.current);
-      },
-      onPanResponderRelease: (_, g) => finalizarGesto(g.vx),
-      onPanResponderTerminate: () => finalizarGesto(0),
-    })
-  ).current;
 
   const formatarDataExibicao = (dataStr: string) => {
     if (!dataStr) return '';
@@ -303,20 +218,17 @@ export default function TelaAgenda() {
 
   const excluirEvento = async (eventoId: number) => {
     try {
-      const resposta = await fetch(`https://app-igreja-eks0.onrender.com/eventos/${eventoId}`, {
-        method: 'DELETE',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const resposta = await authenticatedFetch(`/eventos/${eventoId}`, { method: 'DELETE' });
 
       if (resposta.ok) {
         setModalDetalhesVisivel(false);
-        buscarEventosDoMes(mesAtual + 1, anoAtual);
+        void buscarEventosDoMes(mesAtual + 1, anoAtual);
         Alert.alert("Sucesso", "Evento excluído com sucesso!");
       } else {
         const dados = await resposta.json();
         Alert.alert("Erro", dados.erro || "Não foi possível excluir o evento.");
       }
-    } catch (error) {
+    } catch {
       Alert.alert("Erro", "Falha de conexão com o servidor.");
     }
   };
@@ -333,18 +245,17 @@ export default function TelaAgenda() {
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
-          scrollEnabled={rolagemHabilitada}
         >
           <View style={styles.conteudo}>
         
             {/* CALENDÁRIO ESTÁVEL E SINCRONIZADO */}
-            <View style={styles.calendarCard} {...panResponder.panHandlers}>
+            <View style={styles.calendarCard}>
               <View style={styles.monthNavigator}>
-                <TouchableOpacity onPress={() => mudarMes(-1)} style={styles.arrowButton} activeOpacity={0.7}>
+                <TouchableOpacity accessibilityLabel="Mês anterior" onPress={() => mudarMes(-1)} style={styles.arrowButton} activeOpacity={0.7}>
                   <Ionicons name="chevron-back" size={20} color={cores.verde} />
                 </TouchableOpacity>
                 <Text style={styles.monthTitle}>{mesesNomes[mesAtual]} {anoAtual}</Text>
-                <TouchableOpacity onPress={() => mudarMes(1)} style={styles.arrowButton} activeOpacity={0.7}>
+                <TouchableOpacity accessibilityLabel="Próximo mês" onPress={() => mudarMes(1)} style={styles.arrowButton} activeOpacity={0.7}>
                   <Ionicons name="chevron-forward" size={20} color={cores.verde} />
                 </TouchableOpacity>
               </View>
@@ -355,7 +266,6 @@ export default function TelaAgenda() {
                 ))}
               </View>
 
-              {/* Janela fixa; o trilho com os meses desliza dentro dela */}
               <View
                 style={styles.gradeJanela}
                 onLayout={(e) => {
@@ -363,26 +273,14 @@ export default function TelaAgenda() {
                   if (Math.abs(l - larguraCalendario) > 0.5) setLarguraCalendario(l);
                 }}
               >
-                <Animated.View style={[styles.trilho, { width: larguraCalendario, transform: [{ translateX: trilhoX }] }]}>
-                  {[-2, -1, 0, 1, 2].map((deslocamento) => {
-                    const idx = indiceAtual + deslocamento;
-                    return (
-                      <PaginaMes
-                        key={idx}
-                        ano={Math.floor(idx / 12)}
-                        mes={idx % 12}
-                        eventos={eventosDoMes}
-                        largura={larguraCalendario}
-                        esquerda={(idx - ancoraRef.current) * larguraCalendario}
-                      />
-                    );
-                  })}
-                </Animated.View>
+                <View style={[styles.trilho, { width: larguraCalendario }]}>
+                  <PaginaMes ano={anoAtual} mes={mesAtual} eventos={eventosDoMes} largura={larguraCalendario} esquerda={0} />
+                </View>
               </View>
             </View>
 
             {/* Botão Novo Evento */}
-            {usuario && (usuario.nivel_acesso === 'MASTER' || usuario.nivel_acesso === 'ADMIN') && (
+            {usuario && canManage(usuario) && (
               <TouchableOpacity style={styles.newButton} onPress={() => router.push('/criar-evento' as any)} activeOpacity={0.85}>
                 <Ionicons name="add-circle-outline" size={22} color={cores.bege} style={{ marginRight: 8 }} />
                 <Text style={styles.newButtonText}>Novo Evento</Text>
@@ -394,6 +292,14 @@ export default function TelaAgenda() {
 
             {carregando ? (
               <ActivityIndicator size="small" color={cores.verde} style={{ marginTop: 20 }} />
+            ) : erroCarregamento ? (
+              <View style={styles.emptyBox}>
+                <Ionicons name="cloud-offline-outline" size={40} color={cores.erro} />
+                <Text accessibilityRole="alert" style={styles.emptyText}>{erroCarregamento}</Text>
+                <TouchableOpacity style={styles.retryButton} onPress={() => void buscarEventosDoMes(mesAtual + 1, anoAtual)}>
+                  <Text style={styles.retryButtonText}>Tentar novamente</Text>
+                </TouchableOpacity>
+              </View>
             ) : eventosDoMes.length === 0 ? (
               <View style={styles.emptyBox}>
                 <Ionicons name="calendar-outline" size={40} color={cores.neutro} />
@@ -439,7 +345,7 @@ export default function TelaAgenda() {
       <Modal visible={modalDetalhesVisivel} animationType="slide" transparent={true} onRequestClose={() => setModalDetalhesVisivel(false)}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <TouchableOpacity style={styles.closeModalButton} onPress={() => setModalDetalhesVisivel(false)} activeOpacity={0.7}>
+            <TouchableOpacity accessibilityLabel="Fechar detalhes" style={styles.closeModalButton} onPress={() => setModalDetalhesVisivel(false)} activeOpacity={0.7}>
               <Ionicons name="close" size={20} color={cores.verde} />
             </TouchableOpacity>
 
@@ -476,12 +382,25 @@ export default function TelaAgenda() {
 
             {usuario && (
               usuario.nivel_acesso === 'MASTER' || 
-              (usuario.nivel_acesso === 'ADMIN' && usuario.congregacao_id === eventoSelecionado?.congregacao_id)
+              (usuario.nivel_acesso === 'ADMIN' && usuario.status_conta === 'APROVADO' && usuario.congregacao_id === eventoSelecionado?.congregacao_id)
             ) && (
-              <TouchableOpacity style={styles.deleteButtonModal} onPress={() => confirmarExclusao(eventoSelecionado.id)} activeOpacity={0.85}>
-                <Ionicons name="trash-outline" size={18} color={cores.branco} style={{ marginRight: 8 }} />
-                <Text style={styles.deleteButtonText}>Excluir Evento</Text>
-              </TouchableOpacity>
+              <View style={styles.managementActions}>
+                <TouchableOpacity
+                  style={styles.editButtonModal}
+                  onPress={() => {
+                    setModalDetalhesVisivel(false);
+                    router.push({ pathname: '/editar-evento', params: eventoSelecionado } as never);
+                  }}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="create-outline" size={18} color={cores.branco} style={{ marginRight: 8 }} />
+                  <Text style={styles.deleteButtonText}>Editar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.deleteButtonModal} onPress={() => confirmarExclusao(eventoSelecionado.id)} activeOpacity={0.85}>
+                  <Ionicons name="trash-outline" size={18} color={cores.branco} style={{ marginRight: 8 }} />
+                  <Text style={styles.deleteButtonText}>Excluir</Text>
+                </TouchableOpacity>
+              </View>
             )}
           </View>
         </View>
@@ -555,6 +474,8 @@ const styles = StyleSheet.create({
   sectionTitle: { fontSize: 17, fontWeight: '700', color: cores.verde, marginBottom: 14, marginLeft: 2 },
   emptyBox: { alignItems: 'center', padding: 28, borderRadius: 16, borderWidth: 1, borderStyle: 'dashed', borderColor: cores.neutro },
   emptyText: { color: cores.verdeTexto, fontSize: 14, marginTop: 10, textAlign: 'center' },
+  retryButton: { marginTop: 14, backgroundColor: cores.verde, borderRadius: 10, paddingHorizontal: 18, paddingVertical: 10 },
+  retryButtonText: { color: cores.bege, fontWeight: '700' },
 
   // Cards de evento
   eventCard: {
@@ -592,6 +513,8 @@ const styles = StyleSheet.create({
   modalInfoIcon: { marginRight: 10, marginTop: 1 },
   modalInfoText: { flex: 1, fontSize: 15, lineHeight: 21, color: cores.verde },
   modalInfoLabel: { fontWeight: '700' },
-  deleteButtonModal: { backgroundColor: cores.erro, height: 52, borderRadius: 14, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
+  managementActions: { flexDirection: 'row', gap: 10 },
+  editButtonModal: { flex: 1, backgroundColor: cores.verde, height: 52, borderRadius: 14, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
+  deleteButtonModal: { flex: 1, backgroundColor: cores.erro, height: 52, borderRadius: 14, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
   deleteButtonText: { color: cores.branco, fontSize: 16, fontWeight: '700' }
 });

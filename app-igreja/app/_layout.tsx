@@ -1,12 +1,15 @@
 import { Stack } from 'expo-router';
+import { View } from 'react-native';
+import { SessionMonitor } from '@/components/session-monitor';
 
 export default function RootLayout() {
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      {/* Dizemos para o app que a tela inicial (index) existe e é a primeira */}
-      <Stack.Screen name="index" />
-      {/* Dizemos que as abas também existem para quando formos chamá-las */}
-      <Stack.Screen name="(tabs)" />
-    </Stack>
+    <View style={{ flex: 1 }}>
+      <SessionMonitor />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="index" />
+        <Stack.Screen name="(tabs)" />
+      </Stack>
+    </View>
   );
 }
