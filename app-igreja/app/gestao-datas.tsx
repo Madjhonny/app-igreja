@@ -1,3 +1,4 @@
+import { API_URL, apiFetch, getSessionToken } from '@/services/session';
 
 import React, { useState, useCallback } from 'react';
 import {
@@ -16,9 +17,6 @@ import {
 
 import { router, Stack, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-const API_URL = 'https://app-igreja-eks0.onrender.com';
 
 const MESES = [
   'JANEIRO', 'FEVEREIRO', 'MARÇO', 'ABRIL',
@@ -154,7 +152,7 @@ export default function TelaGestaoDatas() {
     setCarregando(true);
 
     try {
-      const userToken = await AsyncStorage.getItem('userToken');
+      const userToken = await getSessionToken();
 
       if (!userToken) {
         router.replace('/login');
@@ -163,13 +161,13 @@ export default function TelaGestaoDatas() {
 
       setToken(userToken);
 
-      const respCong = await fetch(`${API_URL}/congregacoes`);
+      const respCong = await apiFetch(`${API_URL}/congregacoes`);
 
       if (respCong.ok) {
         setCongregacoes(await respCong.json());
       }
 
-      const respPlan = await fetch(`${API_URL}/gestao-datas`, {
+      const respPlan = await apiFetch(`${API_URL}/gestao-datas`, {
         headers: {
           Authorization: `Bearer ${userToken}`,
         },
@@ -236,7 +234,7 @@ export default function TelaGestaoDatas() {
     if (dias.length === 0) return '';
 
     const formatarCurto = (dataStr: string) => {
-      const [ano, mes, dia] = dataStr.split('-').map(Number);
+      const [, mes, dia] = dataStr.split('-').map(Number);
       return `${String(dia).padStart(2, '0')} ${MESES[mes - 1].slice(0, 3)}`;
     };
 
@@ -374,7 +372,7 @@ export default function TelaGestaoDatas() {
     }
 
     try {
-      const resp = await fetch(`${API_URL}/gestao-datas`, {
+      const resp = await apiFetch(`${API_URL}/gestao-datas`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -427,7 +425,7 @@ export default function TelaGestaoDatas() {
     if (!eventoAtivo) return;
 
     try {
-      const resp = await fetch(
+      const resp = await apiFetch(
         `${API_URL}/gestao-datas/${eventoAtivo.id}/marcador`,
         {
           method: 'PUT',
@@ -463,7 +461,7 @@ export default function TelaGestaoDatas() {
 
     const removerEvento = async () => {
       try {
-        const resp = await fetch(`${API_URL}/gestao-datas/${id}`, {
+        const resp = await apiFetch(`${API_URL}/gestao-datas/${id}`, {
           method: 'DELETE',
           headers: {
             Authorization: `Bearer ${token}`,
@@ -563,7 +561,7 @@ export default function TelaGestaoDatas() {
 
     const executarPublicacao = async () => {
       try {
-        const resp = await fetch(`${API_URL}/gestao-datas/publicar`, {
+        const resp = await apiFetch(`${API_URL}/gestao-datas/publicar`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${token}`,
@@ -663,12 +661,6 @@ export default function TelaGestaoDatas() {
     return '🟢';
   };
 
-  const obterCorMarcador = (marcador: string) => {
-    if (marcador === 'REVISAR') return '#F9A825';
-    if (marcador === 'CONFLITO') return '#D84343';
-    return '#388E3C';
-  };
-
   // Retorna o evento que define a cor do dia.
   // Prioridade: CONFLITO > REVISAR > NORMAL.
   const obterEventoPrincipalDoDia = (data: string) => {
@@ -736,7 +728,6 @@ export default function TelaGestaoDatas() {
               );
             }
 
-            const eventosDia = obterEventosDoDia(diaStr);
             const eventoPrincipal = obterEventoPrincipalDoDia(diaStr);
 
             const selecionado = dataSelecionada === diaStr;
@@ -1092,7 +1083,7 @@ export default function TelaGestaoDatas() {
                   }).sort((a, b) => a.inicio - b.inicio || b.fim - a.fim);
 
                   // Distribui eventos que se cruzam em faixas paralelas dentro do dia.
-                  const grupos: Array<typeof eventos> = [];
+                  const grupos: (typeof eventos)[] = [];
                   let grupoAtual: typeof eventos = [];
                   let fimGrupo = -1;
                   eventos.forEach((item) => {
@@ -1106,7 +1097,7 @@ export default function TelaGestaoDatas() {
                   });
                   if (grupoAtual.length) grupos.push(grupoAtual);
 
-                  const posicionados: Array<{ ev: any; inicio: number; fim: number; duracao: number; faixa: number; totalFaixas: number }> = [];
+                  const posicionados: { ev: any; inicio: number; fim: number; duracao: number; faixa: number; totalFaixas: number }[] = [];
                   grupos.forEach((grupo) => {
                     const faixasFim: number[] = [];
                     const itensGrupo = grupo.map((item) => {

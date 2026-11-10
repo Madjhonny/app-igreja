@@ -1,18 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   StyleSheet,
   Text,
   View,
   TextInput,
   TouchableOpacity,
-  Alert,
   ActivityIndicator,
   KeyboardAvoidingView,
   ScrollView,
   Platform,
 } from 'react-native';
-import { router } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { router, useLocalSearchParams } from 'expo-router';
+import { apiFetch, clearSession, getSessionToken, refreshSession, saveSession, shouldKeepSignedIn } from '@/services/session';
 import { Ionicons } from '@expo/vector-icons'; // Importado para usar o ícone de checkbox
 
 // Tokens visuais (somente aparência)
@@ -27,6 +26,10 @@ const cores = {
 };
 
 export default function TelaLogin() {
+  const { motivo } = useLocalSearchParams<{ motivo?: string }>();
+  const [mensagem, setMensagem] = useState('');
+  const [verificandoSessao, setVerificandoSessao] = useState(true);
+  const aviso = mensagem || motivo;
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [carregando, setCarregando] = useState(false);
@@ -37,67 +40,55 @@ export default function TelaLogin() {
   // Estado puramente visual: qual campo está com foco
   const [campoFocado, setCampoFocado] = useState<'email' | 'senha' | null>(null);
 
-  useEffect(() => {
-    verificarLoginSalvo();
+  const verificarLoginSalvo = useCallback(async () => {
+    setVerificandoSessao(true);
+    try {
+      const [token, manter] = await Promise.all([getSessionToken(), shouldKeepSignedIn()]);
+      setManterConectado(manter);
+      if (token && manter) {
+        const usuarioAtual = await refreshSession();
+        if (usuarioAtual) router.replace('/(tabs)/agenda');
+      } else if (token) {
+        await clearSession(token);
+      }
+    } catch {
+      setMensagem('Não foi possível conferir sua sessão. Verifique a conexão e tente novamente.');
+    } finally {
+      setVerificandoSessao(false);
+    }
   }, []);
 
-  const verificarLoginSalvo = async () => {
-    const token = await AsyncStorage.getItem('userToken');
-    const manter = await AsyncStorage.getItem('manterConectado');
-
-    if (token) {
-      if (manter === 'true') {
-        // Se escolheu manter conectado, pula direto pra Agenda
-        router.replace('/(tabs)/agenda'); 
-      } else {
-        // Se NÃO escolheu manter conectado, limpa a sessão antiga por segurança
-        await AsyncStorage.removeItem('userToken');
-        await AsyncStorage.removeItem('userData');
-        await AsyncStorage.removeItem('manterConectado');
-      }
-    }
-  };
+  useEffect(() => { void Promise.resolve().then(verificarLoginSalvo); }, [verificarLoginSalvo]);
 
   const fazerLogin = async () => {
+    if (carregando || verificandoSessao) return;
+    setMensagem('');
     if (!email || !senha) {
-      Alert.alert('Atenção', 'Preencha e-mail e senha.');
+      setMensagem('Preencha e-mail e senha.');
       return;
     }
 
     setCarregando(true);
     try {
-      const resposta = await fetch('https://app-igreja-eks0.onrender.com/login', {
+      const resposta = await apiFetch('/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, senha })
+        body: JSON.stringify({ email: email.trim().toLowerCase(), senha })
       });
 
       const dados = await resposta.json();
 
       if (resposta.ok) {
-        // Salva o Token e os dados do usuário no celular
-        await AsyncStorage.setItem('userToken', dados.token);
-        await AsyncStorage.setItem('userData', JSON.stringify(dados.usuario));
-        
-        // Salva a preferência de manter conectado (converte boolean para string)
-        await AsyncStorage.setItem('manterConectado', manterConectado ? 'true' : 'false');
-        
+        await saveSession(dados.token, dados.usuario, manterConectado);
         router.replace('/(tabs)/agenda');
       } else {
-        Alert.alert('Erro', dados.erro || 'Falha ao fazer login.');
+        setMensagem(dados.erro || 'Falha ao fazer login.');
       }
-    } catch (error) {
-      Alert.alert('Erro de Conexão', 'Não foi possível conectar ao servidor.');
+    } catch {
+      setMensagem('Não foi possível conectar ao servidor. Tente novamente.');
     } finally {
       setCarregando(false);
     }
-  };
-
-  const entrarComoConvidado = async () => {
-    await AsyncStorage.removeItem('userToken');
-    await AsyncStorage.removeItem('userData');
-    await AsyncStorage.removeItem('manterConectado');
-    router.replace('/(tabs)/agenda');
   };
 
   return (
@@ -119,6 +110,13 @@ export default function TelaLogin() {
           <Text style={styles.logoText}>Agenda ADP</Text>
           <View style={styles.logoTraco} />
           <Text style={styles.subLogoText}>Igreja Matriz & Congregações</Text>
+          {verificandoSessao && <ActivityIndicator color={cores.verde} />}
+          {!!aviso && <View style={{ padding: 12, marginVertical: 12, backgroundColor: cores.suave, borderRadius: 10 }}>
+            <Text accessibilityRole="alert" style={{ color: cores.verde }}>{aviso}</Text>
+            <TouchableOpacity onPress={verificarLoginSalvo} disabled={verificandoSessao || carregando} style={{ paddingTop: 10 }}>
+              <Text style={{ color: cores.verde, fontWeight: 'bold' }}>Conferir sessão novamente</Text>
+            </TouchableOpacity>
+          </View>}
         </View>
 
         <View style={styles.formContainer}>
@@ -135,6 +133,8 @@ export default function TelaLogin() {
                 placeholderTextColor={cores.verdeSutil}
                 selectionColor={cores.verde}
                 keyboardType="email-address"
+                autoComplete="email"
+                accessibilityLabel="E-mail"
                 autoCapitalize="none"
                 value={email}
                 onChangeText={setEmail}
@@ -155,6 +155,8 @@ export default function TelaLogin() {
                 placeholderTextColor={cores.verdeSutil}
                 selectionColor={cores.verde}
                 secureTextEntry
+                autoComplete="current-password"
+                accessibilityLabel="Senha"
                 value={senha}
                 onChangeText={setSenha}
                 onFocus={() => setCampoFocado('senha')}
@@ -168,6 +170,7 @@ export default function TelaLogin() {
               onPress={() => setManterConectado(!manterConectado)}
               activeOpacity={0.7}
               accessibilityRole="checkbox"
+              accessibilityLabel="Manter conectado"
               accessibilityState={{ checked: manterConectado }}
             >
               <Ionicons 
@@ -181,8 +184,10 @@ export default function TelaLogin() {
             <TouchableOpacity 
               style={[styles.loginButton, carregando && styles.buttonDisabled]} 
               onPress={fazerLogin}
-              disabled={carregando}
+              disabled={carregando || verificandoSessao}
               activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Entrar"
             >
               {carregando ? <ActivityIndicator color={cores.bege} /> : <Text style={styles.loginButtonText}>ENTRAR</Text>}
             </TouchableOpacity>
@@ -194,15 +199,6 @@ export default function TelaLogin() {
               </Text>
             </TouchableOpacity>
 
-            <View style={styles.dividerContainer}>
-              <View style={styles.dividerLine} />
-              <Text style={styles.dividerText}>OU</Text>
-              <View style={styles.dividerLine} />
-            </View>
-
-            <TouchableOpacity style={styles.guestButton} onPress={entrarComoConvidado} activeOpacity={0.8}>
-              <Text style={styles.guestButtonText}>Entrar como Convidado</Text>
-            </TouchableOpacity>
           </View>
         </View>
       </ScrollView>
@@ -277,18 +273,4 @@ const styles = StyleSheet.create({
   registerButtonText: { color: cores.verdeTexto, fontSize: 14 },
   registerButtonLink: { color: cores.verde, fontWeight: '700' },
 
-  dividerContainer: { flexDirection: 'row', alignItems: 'center', marginVertical: 28 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: cores.neutro },
-  dividerText: { marginHorizontal: 14, color: cores.verdeSutil, fontSize: 12, fontWeight: '600', letterSpacing: 1 },
-
-  guestButton: {
-    height: 54,
-    backgroundColor: cores.suave,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: cores.neutro,
-  },
-  guestButtonText: { color: cores.verde, fontSize: 16, fontWeight: '600' },
 });

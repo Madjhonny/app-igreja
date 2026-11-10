@@ -1,38 +1,32 @@
-import React, { useState, useEffect } from 'react';
+import { authenticatedFetch, getStoredUser, storeSessionUser } from '@/services/session';
+import React, { useCallback, useState, useEffect } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Image } from 'react-native';
 import { router, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 
 export default function TelaEditarPerfil() {
-  const [token, setToken] = useState('');
   const [nomeExibicao, setNomeExibicao] = useState('');
   const [bio, setBio] = useState('');
   const [foto, setFoto] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
 
-  useEffect(() => {
-    carregarDadosIniciais();
-  }, []);
-
-  const carregarDadosIniciais = async () => {
+  const carregarDadosIniciais = useCallback(async () => {
     try {
-      const userToken = await AsyncStorage.getItem('userToken');
-      const userData = await AsyncStorage.getItem('userData');
-      
-      if (userToken) setToken(userToken);
-      
-      if (userData) {
-        const usuario = JSON.parse(userData);
+      const usuario = await getStoredUser();
+      if (usuario) {
         setNomeExibicao(usuario.nome_exibicao || usuario.nome_completo || '');
         setBio(usuario.bio || '');
         setFoto(usuario.foto_perfil || null);
       }
-    } catch (error) {
-      console.error('Erro ao carregar dados:', error);
+    } catch {
+      Alert.alert('Erro', 'Não foi possível carregar seu perfil.');
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void Promise.resolve().then(carregarDadosIniciais);
+  }, [carregarDadosIniciais]);
 
   const escolherFoto = async () => {
     const permissao = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -52,9 +46,14 @@ export default function TelaEditarPerfil() {
     if (!resultado.canceled && resultado.assets[0]) {
       const asset = resultado.assets[0];
       if (asset.base64) {
+        const tamanhoAproximado = Math.ceil(asset.base64.length * 0.75);
+        if (tamanhoAproximado > 1_500_000) {
+          Alert.alert('Imagem muito grande', 'Escolha uma imagem de até 1,5 MB.');
+          return;
+        }
         setFoto(`data:image/jpeg;base64,${asset.base64}`);
       } else {
-        setFoto(asset.uri);
+        Alert.alert('Imagem inválida', 'Não foi possível preparar a imagem para envio.');
       }
     }
   };
@@ -64,17 +63,21 @@ export default function TelaEditarPerfil() {
   };
 
   const salvarPerfil = async () => {
+    const nomeLimpo = nomeExibicao.trim();
+    if (nomeLimpo.length < 2 || nomeLimpo.length > 80 || bio.trim().length > 500) {
+      Alert.alert('Atenção', 'Use um nome entre 2 e 80 caracteres e uma biografia de até 500 caracteres.');
+      return;
+    }
     setCarregando(true);
     try {
-      const resposta = await fetch('https://app-igreja-eks0.onrender.com/usuarios/perfil', {
+      const resposta = await authenticatedFetch('/usuarios/perfil', {
         method: 'PUT',
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
-          nome_exibicao: nomeExibicao,
-          bio,
+          nome_exibicao: nomeLimpo,
+          bio: bio.trim(),
           foto_perfil: foto
         })
       });
@@ -82,14 +85,14 @@ export default function TelaEditarPerfil() {
       const dados = await resposta.json();
 
       if (resposta.ok) {
-        await AsyncStorage.setItem('userData', JSON.stringify(dados.usuario));
+        await storeSessionUser(dados.usuario);
         Alert.alert('Sucesso', 'Perfil atualizado com sucesso!', [
           { text: 'OK', onPress: () => router.back() }
         ]);
       } else {
         Alert.alert('Erro', dados.erro || 'Não foi possível atualizar o perfil.');
       }
-    } catch (error) {
+    } catch {
       Alert.alert('Erro', 'Falha de conexão com o servidor.');
     } finally {
       setCarregando(false);
@@ -101,7 +104,7 @@ export default function TelaEditarPerfil() {
       <Stack.Screen options={{ headerShown: false }} />
 
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity onPress={() => router.back()} style={styles.backButton} accessibilityRole="button" accessibilityLabel="Voltar">
           <Ionicons name="arrow-back" size={24} color="#F7F5EC" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Editar Perfil</Text>
@@ -111,7 +114,7 @@ export default function TelaEditarPerfil() {
       <View style={styles.formContainer}>
         
         <View style={styles.avatarSection}>
-          <TouchableOpacity onPress={escolherFoto}>
+          <TouchableOpacity onPress={escolherFoto} accessibilityRole="button" accessibilityLabel="Escolher foto do perfil">
             {foto ? (
               <Image source={{ uri: foto }} style={styles.avatar} />
             ) : (
@@ -139,6 +142,7 @@ export default function TelaEditarPerfil() {
           onChangeText={setNomeExibicao} 
           placeholder="Como deseja ser chamado no app"
           placeholderTextColor="#999"
+          accessibilityLabel="Nome de exibição"
         />
 
         <Text style={styles.label}>Biografia (BIO)</Text>
@@ -150,9 +154,10 @@ export default function TelaEditarPerfil() {
           onChangeText={setBio} 
           multiline 
           numberOfLines={4} 
+          accessibilityLabel="Biografia"
         />
 
-        <TouchableOpacity style={styles.saveButton} onPress={salvarPerfil} disabled={carregando}>
+        <TouchableOpacity style={styles.saveButton} onPress={salvarPerfil} disabled={carregando} accessibilityRole="button" accessibilityLabel="Salvar alterações do perfil">
           {carregando ? (
             <ActivityIndicator color="#fff" />
           ) : (

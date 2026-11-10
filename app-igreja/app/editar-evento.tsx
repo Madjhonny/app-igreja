@@ -1,42 +1,70 @@
-import React, { useState, useEffect } from 'react';
+import { apiFetch, authenticatedFetch } from '@/services/session';
+import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal, FlatList } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
+
+function primeiroParametro(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+function criarDataInicial(data?: string, horario?: string) {
+  const partesData = data?.split('T')[0].split('-').map(Number);
+  const partesHora = horario?.split(':').map(Number);
+  if (partesData?.length === 3 && partesHora && partesHora.length >= 2) {
+    const resultado = new Date(partesData[0], partesData[1] - 1, partesData[2], partesHora[0], partesHora[1]);
+    if (!Number.isNaN(resultado.getTime())) return resultado;
+  }
+  return new Date();
+}
+
+function formatarDataBanco(data: Date) {
+  return `${data.getFullYear()}-${String(data.getMonth() + 1).padStart(2, '0')}-${String(data.getDate()).padStart(2, '0')}`;
+}
 
 export default function TelaEditarEvento() {
   // Recebe os dados que vieram da tela de Agenda
   const params = useLocalSearchParams(); 
   
-  const [titulo, setTitulo] = useState(params.titulo as string || '');
+  const dataInicioOriginal = primeiroParametro(params.data_inicio);
+  const dataFimOriginal = primeiroParametro(params.data_fim) || dataInicioOriginal;
+  const horarioOriginal = primeiroParametro(params.horario);
+  const eventoId = primeiroParametro(params.id);
+  const duracaoDias = useMemo(() => {
+    if (!dataInicioOriginal || !dataFimOriginal) return 0;
+    const inicio = new Date(`${dataInicioOriginal.split('T')[0]}T12:00:00`);
+    const fim = new Date(`${dataFimOriginal.split('T')[0]}T12:00:00`);
+    return Math.max(0, Math.round((fim.getTime() - inicio.getTime()) / 86_400_000));
+  }, [dataFimOriginal, dataInicioOriginal]);
+
+  const [titulo, setTitulo] = useState(primeiroParametro(params.titulo) || '');
   
   // === ESTADOS DE DATA E HORA ===
-  const [dataEvento, setDataEvento] = useState(new Date()); 
+  const [dataEvento, setDataEvento] = useState(() => criarDataInicial(dataInicioOriginal, horarioOriginal));
   const [mostrarCalendario, setMostrarCalendario] = useState(false);
   const [mostrarRelogio, setMostrarRelogio] = useState(false);
   
   // === ESTADOS DA CONGREGAÇÃO ===
-  const [congregacao, setCongregacao] = useState(params.congregacao as string || 'Selecione o local');
+  const [congregacao, setCongregacao] = useState(primeiroParametro(params.congregacao) || 'Selecione o local');
+  const [congregacaoId, setCongregacaoId] = useState(primeiroParametro(params.congregacao_id) || '');
   const [modalVisivel, setModalVisivel] = useState(false);
-  
-  const listaCongregacoes = [
-    'Matriz', 'Monan', 'Sapê', 'Matapaca', 'Areia Grossa', 
-    'Maceió', 'Morro da Vitória', 'Paineiras', 'Fazendinha', 
-    'Cafubá', 'Viradouro'
-  ];
+  const [listaCongregacoes, setListaCongregacoes] = useState<{ id: number; nome: string }[]>([]);
 
   const [carregando, setCarregando] = useState(false);
 
-  // Inicializa a data e hora corretas que vieram do banco
   useEffect(() => {
-    if (params.data_inicio && params.horario) {
-      const dataString = (params.data_inicio as string).split('T')[0];
-      const [ano, mes, dia] = dataString.split('-');
-      const [hora, minuto] = (params.horario as string).split(':');
-      
-      const dataFormatada = new Date(Number(ano), Number(mes) - 1, Number(dia), Number(hora), Number(minuto));
-      setDataEvento(dataFormatada);
-    }
-  }, [params.data_inicio, params.horario]);
+    let ativo = true;
+    void Promise.resolve().then(async () => {
+      try {
+        const resposta = await apiFetch('/congregacoes');
+        const dados = await resposta.json();
+        if (ativo && resposta.ok && Array.isArray(dados)) setListaCongregacoes(dados);
+      } catch {
+        if (ativo) Alert.alert('Erro', 'Não foi possível carregar as congregações.');
+      }
+    });
+    return () => { ativo = false; };
+  }, []);
 
   // === FUNÇÕES DO CALENDÁRIO E RELÓGIO ===
   const aoMudarData = (event: any, dataSelecionada?: Date) => {
@@ -65,15 +93,14 @@ export default function TelaEditarEvento() {
 
   // === FUNÇÃO PARA SALVAR (ATUALIZAR) ===
   const salvarEdicao = async () => {
-    if (!titulo || congregacao === 'Selecione o local') {
+    if (!eventoId || !titulo.trim() || !congregacaoId) {
       Alert.alert("Atenção", "Por favor, preencha o título e selecione a congregação.");
       return;
     }
 
-    const ano = dataEvento.getFullYear();
-    const mes = String(dataEvento.getMonth() + 1).padStart(2, '0');
-    const dia = String(dataEvento.getDate()).padStart(2, '0');
-    const dataFormatadaDB = `${ano}-${mes}-${dia}`;
+    const dataFormatadaDB = formatarDataBanco(dataEvento);
+    const dataFim = new Date(dataEvento);
+    dataFim.setDate(dataFim.getDate() + duracaoDias);
 
     const horas = String(dataEvento.getHours()).padStart(2, '0');
     const minutos = String(dataEvento.getMinutes()).padStart(2, '0');
@@ -81,28 +108,27 @@ export default function TelaEditarEvento() {
 
     setCarregando(true);
     try {
-      // ⚠️ TROQUE SEU_IP_AQUI
-      const resposta = await fetch(`http://192.168.1.69:3000/eventos/${params.id}`, {
+      const resposta = await authenticatedFetch(`/eventos/${encodeURIComponent(eventoId)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          titulo: titulo,
+          titulo: titulo.trim(),
           data_inicio: dataFormatadaDB,
-          data_fim: null,
+          data_fim: formatarDataBanco(dataFim),
           horario: horarioDB,
-          congregacao: congregacao,
-          legenda: "",
-          banner_url: ""
+          congregacao_id: Number(congregacaoId),
+          legenda: primeiroParametro(params.legenda) || '',
         })
       });
 
+      const dados = await resposta.json().catch(() => ({}));
       if (resposta.ok) {
         Alert.alert("Sucesso!", "Evento atualizado com sucesso.");
         router.back(); 
       } else {
-        Alert.alert("Erro", "Não foi possível atualizar o evento.");
+        Alert.alert("Erro", dados.erro || "Não foi possível atualizar o evento.");
       }
-    } catch (error) {
+    } catch {
       Alert.alert("Erro de Conexão", "Não foi possível conectar ao servidor.");
     } finally {
       setCarregando(false);
@@ -118,12 +144,10 @@ export default function TelaEditarEvento() {
   };
 
   const excluirEvento = async () => {
+    if (!eventoId) return;
     setCarregando(true);
     try {
-      // ⚠️ TROQUE SEU_IP_AQUI
-      const resposta = await fetch(`http://192.168.1.69:3000/eventos/${params.id}`, {
-        method: 'DELETE',
-      });
+      const resposta = await authenticatedFetch(`/eventos/${encodeURIComponent(eventoId)}`, { method: 'DELETE' });
 
       if (resposta.ok) {
         Alert.alert("Excluído", "O evento foi apagado.");
@@ -131,7 +155,7 @@ export default function TelaEditarEvento() {
       } else {
         Alert.alert("Erro", "Não foi possível excluir o evento.");
       }
-    } catch (error) {
+    } catch {
       Alert.alert("Erro de Conexão", "Não foi possível conectar ao servidor.");
     } finally {
       setCarregando(false);
@@ -202,10 +226,10 @@ export default function TelaEditarEvento() {
             <Text style={styles.modalTitle}>Escolha a Congregação</Text>
             <FlatList 
               data={listaCongregacoes}
-              keyExtractor={(item) => item}
+              keyExtractor={(item) => String(item.id)}
               renderItem={({item}) => (
-                <TouchableOpacity style={styles.modalOption} onPress={() => { setCongregacao(item); setModalVisivel(false); }}>
-                  <Text style={styles.modalOptionText}>{item}</Text>
+                <TouchableOpacity style={styles.modalOption} onPress={() => { setCongregacao(item.nome); setCongregacaoId(String(item.id)); setModalVisivel(false); }}>
+                  <Text style={styles.modalOptionText}>{item.nome}</Text>
                 </TouchableOpacity>
               )}
             />

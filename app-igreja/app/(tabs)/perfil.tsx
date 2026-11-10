@@ -1,46 +1,40 @@
-import React, { useState, useCallback } from 'react';
-import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, Alert } from 'react-native';
+import { clearSession, canManage, getStoredUser } from '@/services/session';
+import { useSessionUser } from '@/hooks/use-session-user';
+import React, { useCallback } from 'react';
+import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, Alert, Platform } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function TelaPerfil() {
-  const [usuario, setUsuario] = useState<any>(null);
+  const [usuario, setUsuario] = useSessionUser();
 
   useFocusEffect(
     useCallback(() => {
-      carregarDadosUsuario();
-    }, [])
+      let active = true;
+      getStoredUser().then(user => {
+        if (active) setUsuario(user);
+      }).catch(() => { if (active) setUsuario(null); });
+      return () => { active = false; };
+    }, [setUsuario])
   );
 
-  const carregarDadosUsuario = async () => {
-    const userData = await AsyncStorage.getItem('userData');
-    if (userData) {
-      setUsuario(JSON.parse(userData));
-    }
-  };
-
   const fazerLogout = () => {
-    Alert.alert(
-      'Sair da Conta',
-      'Tem certeza de que deseja desconectar?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        { 
-          text: 'Sair', 
-          style: 'destructive', 
-          onPress: async () => {
-            await AsyncStorage.removeItem('userToken');
-            await AsyncStorage.removeItem('userData');
-            router.replace('/');
-          } 
-        }
-      ]
-    );
+    const sair = async () => {
+      await clearSession();
+      router.replace('/login');
+    };
+    if (Platform.OS === 'web') {
+      if (window.confirm('Tem certeza de que deseja desconectar?')) void sair();
+      return;
+    }
+    Alert.alert('Sair da Conta', 'Tem certeza de que deseja desconectar?', [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Sair', style: 'destructive', onPress: sair },
+    ]);
   };
 
   const nomeExibicaoFinal = usuario?.nome_exibicao || usuario?.nome_completo || 'Usuário';
-  const ehAdminOuMaster = usuario && (usuario.nivel_acesso === 'MASTER' || usuario.nivel_acesso === 'ADMIN');
+  const ehAdminOuMaster = usuario && canManage(usuario);
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 40 }}>
@@ -64,6 +58,8 @@ export default function TelaPerfil() {
           <TouchableOpacity 
             style={[styles.menuCard, { backgroundColor: '#EFECE6', borderColor: '#2A4B4C', borderWidth: 1 }]} 
             onPress={() => router.push('/gestao-usuarios' as any)}
+            accessibilityRole="button"
+            accessibilityLabel="Abrir painel de gestão"
           >
             <View style={styles.menuIconContainer}>
               <Ionicons name="settings-outline" size={24} color="#2A4B4C" />
@@ -80,6 +76,8 @@ export default function TelaPerfil() {
         <TouchableOpacity 
           style={styles.menuCard} 
           onPress={() => router.push('/editar-perfil' as any)}
+          accessibilityRole="button"
+          accessibilityLabel="Editar perfil"
         >
           <View style={styles.menuIconContainer}>
             <Ionicons name="create-outline" size={24} color="#2A4B4C" />
@@ -95,6 +93,8 @@ export default function TelaPerfil() {
         <TouchableOpacity 
           style={styles.menuCard} 
           onPress={() => router.push('/dados-seguranca' as any)}
+          accessibilityRole="button"
+          accessibilityLabel="Consultar dados e segurança"
         >
           <View style={styles.menuIconContainer}>
             <Ionicons name="shield-checkmark-outline" size={24} color="#2A4B4C" />
@@ -107,7 +107,7 @@ export default function TelaPerfil() {
         </TouchableOpacity>
 
         {/* Botão de Desconectar / Sair da Conta */}
-        <TouchableOpacity style={styles.logoutButton} onPress={fazerLogout}>
+        <TouchableOpacity style={styles.logoutButton} onPress={fazerLogout} accessibilityRole="button" accessibilityLabel="Desconectar da conta">
           <Ionicons name="log-out-outline" size={20} color="#E63946" style={{ marginRight: 8 }} />
           <Text style={styles.logoutButtonText}>Desconectar da Conta</Text>
         </TouchableOpacity>

@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import { useSessionUser } from '@/hooks/use-session-user';
+import { apiFetch, authenticatedFetch, refreshSession } from '@/services/session';
+import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal } from 'react-native';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function TelaCriarEvento() {
   const params = useLocalSearchParams();
-  const [token, setToken] = useState('');
-  const [usuario, setUsuario] = useState<any>(null);
+  const [usuario, setUsuario] = useSessionUser();
   const [congregacoes, setCongregacoes] = useState<any[]>([]);
   
   const [titulo, setTitulo] = useState('');
@@ -19,8 +19,9 @@ export default function TelaCriarEvento() {
 
   // Estados do Modal de Calendário
   const [modalCalendarioVisivel, setModalCalendarioVisivel] = useState(false);
-  const [dataInicio, setDataInicio] = useState<string | null>(null);
-  const [dataFim, setDataFim] = useState<string | null>(null);
+  const dataSelecionada = Array.isArray(params.dataSelecionada) ? params.dataSelecionada[0] : params.dataSelecionada;
+  const [dataInicio, setDataInicio] = useState<string | null>(() => dataSelecionada || null);
+  const [dataFim, setDataFim] = useState<string | null>(() => dataSelecionada || null);
   const [mesAtual, setMesAtual] = useState(new Date().getMonth());
   const [anoAtual, setAnoAtual] = useState(new Date().getFullYear());
 
@@ -33,43 +34,32 @@ export default function TelaCriarEvento() {
   const [modalCongregacaoVisivel, setModalCongregacaoVisivel] = useState(false);
   const [nomeCongregacaoSelecionada, setNomeCongregacaoSelecionada] = useState('Selecionar congregação');
 
-  useEffect(() => {
-    carregarDadosIniciais();
-    if (params.dataSelecionada) {
-      setDataInicio(params.dataSelecionada as string);
-      setDataFim(params.dataSelecionada as string);
-    }
-  }, [params.dataSelecionada]);
-
-  const carregarDadosIniciais = async () => {
-    const userToken = await AsyncStorage.getItem('userToken');
-    const userData = await AsyncStorage.getItem('userData');
-    if (userToken) setToken(userToken);
-    
-    if (userData) {
-      const parsedUser = JSON.parse(userData);
-      setUsuario(parsedUser);
-      if (parsedUser.nivel_acesso === 'ADMIN') {
-        // Busca o nome da congregação do admin se necessário ou define ID
-        setCongregacaoId(parsedUser.congregacao_id);
-      }
-    }
-
+  const carregarDadosIniciais = useCallback(async () => {
     try {
-      const resposta = await fetch('https://app-igreja-eks0.onrender.com/congregacoes');
+      const [parsedUser, resposta] = await Promise.all([
+        refreshSession(),
+        apiFetch('/congregacoes'),
+      ]);
+      if (parsedUser) {
+        setUsuario(parsedUser);
+        if (parsedUser.nivel_acesso === 'ADMIN') setCongregacaoId(String(parsedUser.congregacao_id || ''));
+      }
       if (resposta.ok) {
         const dados = await resposta.json();
         setCongregacoes(dados);
-        if (userData) {
-          const parsedUser = JSON.parse(userData);
+        if (parsedUser) {
           const encontrada = dados.find((c: any) => c.id === parsedUser.congregacao_id);
           if (encontrada) setCongregacaoNomeAdmin(encontrada.nome);
         }
       }
-    } catch (error) {
-      console.error("Erro ao carregar congregações:", error);
+    } catch {
+      Alert.alert('Erro', 'Não foi possível carregar os dados para criar o evento.');
     }
-  };
+  }, [setUsuario]);
+
+  useEffect(() => {
+    void Promise.resolve().then(carregarDadosIniciais);
+  }, [carregarDadosIniciais]);
 
   const selecionarDiaCalendario = (diaStr: string) => {
     if (!dataInicio || (dataInicio && dataFim)) {
@@ -118,12 +108,9 @@ export default function TelaCriarEvento() {
 
     setCarregando(true);
     try {
-      const resposta = await fetch('https://app-igreja-eks0.onrender.com/eventos', {
+      const resposta = await authenticatedFetch('/eventos', {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           titulo, 
           congregacao_id: congregacaoId, 
@@ -143,7 +130,7 @@ export default function TelaCriarEvento() {
       } else {
         Alert.alert('Erro', dados.erro || 'Falha ao criar evento.');
       }
-    } catch (error) {
+    } catch {
       Alert.alert('Erro', 'Não foi possível conectar ao servidor.');
     } finally {
       setCarregando(false);

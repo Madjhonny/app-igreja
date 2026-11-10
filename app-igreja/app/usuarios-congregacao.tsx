@@ -1,15 +1,15 @@
+import { useSessionUser } from '@/hooks/use-session-user';
+import { apiFetch, authenticatedFetch, getSessionToken, getStoredUser } from '@/services/session';
 import React, { useState, useCallback } from 'react';
 import { StyleSheet, Text, View, FlatList, TouchableOpacity, ActivityIndicator, Alert, Modal, Image, ScrollView } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function TelaUsuariosCongregacao() {
   const { congregacaoNome } = useLocalSearchParams();
   const [usuarios, setUsuarios] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(false);
-  const [tokenMaster, setTokenMaster] = useState('');
-  const [usuarioLogado, setUsuarioLogado] = useState<any>(null);
+  const [usuarioLogado, setUsuarioLogado] = useSessionUser();
   const [listaCongregacoes, setListaCongregacoes] = useState<any[]>([]);
 
   const [usuarioSelecionado, setUsuarioSelecionado] = useState<any>(null);
@@ -18,28 +18,21 @@ export default function TelaUsuariosCongregacao() {
   const [modalNivelVisivel, setModalNivelVisivel] = useState(false);
   const [modalTrocarCongregacaoVisivel, setModalTrocarCongregacaoVisivel] = useState(false);
 
-  useFocusEffect(useCallback(() => { carregarDadosIniciais(); }, [congregacaoNome]));
-
-  const carregarDadosIniciais = async () => {
+  const carregarDadosIniciais = useCallback(async () => {
     setCarregando(true);
     try {
-      const token = await AsyncStorage.getItem('userToken');
-      const userData = await AsyncStorage.getItem('userData');
-      if (!token || !userData) return router.replace('/login');
-      
-      setTokenMaster(token);
-      setUsuarioLogado(JSON.parse(userData));
+      const [token, user] = await Promise.all([getSessionToken(), getStoredUser()]);
+      if (!token || !user) return router.replace('/login');
+      setUsuarioLogado(user);
 
       // Busca congregações cadastradas
-      const respCong = await fetch('https://app-igreja-eks0.onrender.com/congregacoes');
+      const respCong = await apiFetch('/congregacoes');
       if (respCong.ok) {
         setListaCongregacoes(await respCong.json());
       }
 
       // Busca usuários
-      const resposta = await fetch('https://app-igreja-eks0.onrender.com/usuarios', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const resposta = await authenticatedFetch('/usuarios');
 
       if (resposta.ok) {
         const todosUsuarios = await resposta.json();
@@ -48,61 +41,65 @@ export default function TelaUsuariosCongregacao() {
       } else {
         router.back();
       }
-    } catch (error) {
+    } catch {
       Alert.alert('Erro', 'Falha na conexão com o servidor.');
     } finally {
       setCarregando(false);
     }
-  };
+  }, [congregacaoNome, setUsuarioLogado]);
+
+  useFocusEffect(useCallback(() => {
+    void carregarDadosIniciais();
+  }, [carregarDadosIniciais]));
 
   const alterarStatus = async (novoStatus: string) => {
     setModalStatusVisivel(false);
     try {
-      const resposta = await fetch(`https://app-igreja-eks0.onrender.com/usuarios/${usuarioSelecionado.id}/status`, {
+      const resposta = await authenticatedFetch(`/usuarios/${usuarioSelecionado.id}/status`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenMaster}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status_conta: novoStatus })
       });
       if (resposta.ok) {
         setUsuarioSelecionado({ ...usuarioSelecionado, status_conta: novoStatus });
-        carregarDadosIniciais();
+        void carregarDadosIniciais();
       }
-    } catch (error) { Alert.alert('Erro', 'Falha na conexão.'); }
+    } catch { Alert.alert('Erro', 'Falha na conexão.'); }
   };
 
   const alterarNivel = async (novoNivel: string) => {
     setModalNivelVisivel(false);
     try {
-      const resposta = await fetch(`https://app-igreja-eks0.onrender.com/usuarios/${usuarioSelecionado.id}/nivel`, {
+      const resposta = await authenticatedFetch(`/usuarios/${usuarioSelecionado.id}/nivel`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenMaster}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ nivel_acesso: novoNivel })
       });
       if (resposta.ok) {
         setUsuarioSelecionado({ ...usuarioSelecionado, nivel_acesso: novoNivel });
-        carregarDadosIniciais();
+        void carregarDadosIniciais();
       }
-    } catch (error) { Alert.alert('Erro', 'Falha na conexão.'); }
+    } catch { Alert.alert('Erro', 'Falha na conexão.'); }
   };
 
   const alterarCongregacao = async (novaCongregacaoId: number, nomeNovaCongregacao: string) => {
     setModalTrocarCongregacaoVisivel(false);
     try {
-      const resposta = await fetch(`https://app-igreja-eks0.onrender.com/usuarios/${usuarioSelecionado.id}/congregacao`, {
+      const resposta = await authenticatedFetch(`/usuarios/${usuarioSelecionado.id}/congregacao`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenMaster}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ congregacao_id: novaCongregacaoId })
       });
       if (resposta.ok) {
         const dados = await resposta.json();
         setUsuarioSelecionado(dados.usuario);
-        carregarDadosIniciais();
+        void carregarDadosIniciais();
         Alert.alert("Sucesso", `Congregação alterada para ${nomeNovaCongregacao} com sucesso!`);
       } else {
         const err = await resposta.json();
         Alert.alert("Erro", err.erro || "Não foi possível alterar a congregação.");
       }
-    } catch (error) { Alert.alert('Erro', 'Falha na conexão.'); }
+    } catch { Alert.alert('Erro', 'Falha na conexão.'); }
   };
 
   const abrirDetalhes = (usuario: any) => {

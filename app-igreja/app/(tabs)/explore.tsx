@@ -1,7 +1,8 @@
+import { authenticatedFetch, canInteract, canManage, refreshSession } from '@/services/session';
+import { useSessionUser } from '@/hooks/use-session-user';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, TextInput, Modal, Alert, ActivityIndicator, Dimensions, FlatList, RefreshControl, Linking, StatusBar, BackHandler, PixelRatio } from 'react-native';
+import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, TextInput, Modal, Alert, ActivityIndicator, Dimensions, FlatList, RefreshControl, StatusBar, BackHandler, PixelRatio } from 'react-native';
 import { router, useFocusEffect, useNavigation } from 'expo-router';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
 
 // Altura da janela usada apenas como valor inicial; no fullscreen a altura real é medida via onLayout
@@ -9,12 +10,27 @@ const { height } = Dimensions.get('window');
 
 // Guarda a proporção (altura / largura) real de cada imagem já carregada.
 // Assim, ao rolar o feed e a célula ser recriada, ela já nasce com a altura correta (sem "pulo").
-const proporcoesCache: { [postId: number]: number } = {};
+const proporcoesCache: { [postId: number]: { uri: string; razao: number } } = {};
 
-// Imagem do feed: ocupa toda a largura do card e a altura se adapta à proporção original.
-// altura = largura × (altura_original / largura_original)  (feito pelo aspectRatio do container)
+// Consulta as dimensões sem depender do formato do evento onLoad no navegador.
 const ImagemFeed = React.memo(function ImagemFeed({ postId, uri }: { postId: number; uri: string }) {
-  const [razao, setRazao] = useState<number>(proporcoesCache[postId] || 1);
+  const [medida, setMedida] = useState<{ uri: string; razao: number } | null>(null);
+  const cache = proporcoesCache[postId];
+  const razao = medida?.uri === uri ? medida.razao : cache?.uri === uri ? cache.razao : 1;
+
+  useEffect(() => {
+    let ativo = true;
+    if (!uri) return;
+    Image.getSize(uri, (largura, altura) => {
+      if (!ativo || !Number.isFinite(largura) || !Number.isFinite(altura) || largura <= 0 || altura <= 0) return;
+      const novaMedida = { uri, razao: altura / largura };
+      proporcoesCache[postId] = novaMedida;
+      setMedida(novaMedida);
+    }, () => {
+      // Mantém a proporção padrão se a imagem não puder ser medida.
+    });
+    return () => { ativo = false; };
+  }, [postId, uri]);
 
   return (
     <View style={[styles.mediaImagemFeed, { aspectRatio: 1 / razao }]}>
@@ -22,14 +38,6 @@ const ImagemFeed = React.memo(function ImagemFeed({ postId, uri }: { postId: num
         source={{ uri }}
         style={styles.mediaContentFeed}
         resizeMode="cover"
-        onLoad={(e) => {
-          const { width: larguraOriginal, height: alturaOriginal } = e.nativeEvent.source;
-          if (larguraOriginal > 0 && alturaOriginal > 0) {
-            const novaRazao = alturaOriginal / larguraOriginal;
-            proporcoesCache[postId] = novaRazao;
-            setRazao((atual) => (Math.abs(atual - novaRazao) > 0.001 ? novaRazao : atual));
-          }
-        }}
       />
     </View>
   );
@@ -39,10 +47,9 @@ export default function TelaEventos() {
   const [posts, setPosts] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [temNovosPosts, setTemNovosPosts] = useState(false);
+  const [erroCarregamento, setErroCarregamento] = useState('');
   
-  const [usuarioLogado, setUsuarioLogado] = useState<any>(null);
-  const [token, setToken] = useState('');
+  const [usuarioLogado, setUsuarioLogado] = useSessionUser();
 
   // Controle do modo Fullscreen e navegação por slides
   const [modoFullscreen, setModoFullscreen] = useState(false);
@@ -66,15 +73,6 @@ export default function TelaEventos() {
   // Estados para curtidas
   const [postsCurtidas, setPostsCurtidas] = useState<{ [key: number]: { total: number, curtiu: boolean } }>({});
   const [comentariosCurtidas, setComentariosCurtidas] = useState<{ [key: number]: { total: number, curtiu: boolean } }>({});
-
-  useFocusEffect(
-    useCallback(() => {
-      carregarUsuarioEPostsFirstTime();
-      return () => {
-        navigation.getParent()?.setOptions({ tabBarStyle: { display: 'flex' } });
-      };
-    }, [])
-  );
 
   // Intercepta o botão de voltar físico do celular para fechar o fullscreen em vez de trocar de aba
   useEffect(() => {
@@ -100,38 +98,11 @@ export default function TelaEventos() {
     }
   }, [modoFullscreen, navigation]);
 
-  useEffect(() => {
-    const intervalo = setInterval(() => {
-      if (token) {
-        verificarNovosPostsBackground();
-      }
-    }, 15000);
-
-    return () => clearInterval(intervalo);
-  }, [token, posts]);
-
-  const carregarUsuarioEPostsFirstTime = async () => {
-    try {
-      const userData = await AsyncStorage.getItem('userData');
-      const userToken = await AsyncStorage.getItem('userToken');
-      if (userData && userToken) {
-        setUsuarioLogado(JSON.parse(userData));
-        setToken(userToken);
-        await buscarPosts(userToken, false);
-      }
-    } catch (error) {
-      console.error("Erro ao carregar sessão:", error);
-    } finally {
-      setCarregando(false);
-    }
-  };
-
-  const buscarPosts = async (userToken: string, isRefresh = false) => {
+  const buscarPosts = useCallback(async (isRefresh = false) => {
     if (!isRefresh) setCarregando(true);
+    setErroCarregamento('');
     try {
-      const resposta = await fetch('https://app-igreja-eks0.onrender.com/mural', {
-        headers: { 'Authorization': `Bearer ${userToken}` }
-      });
+      const resposta = await authenticatedFetch('/mural');
       if (resposta.ok) {
         const dados = await resposta.json();
         setPosts(dados);
@@ -141,44 +112,42 @@ export default function TelaEventos() {
           mapCurtidas[p.id] = { total: p.totalCurtidas, curtiu: p.curtiuPorMim };
         });
         setPostsCurtidas(mapCurtidas);
-        setTemNovosPosts(false);
+      } else {
+        const dados = await resposta.json().catch(() => ({}));
+        setErroCarregamento(dados.erro || 'Não foi possível carregar as publicações.');
       }
-    } catch (error) {
-      console.error("Erro ao buscar posts:", error);
+    } catch {
+      setErroCarregamento('Falha de conexão. Verifique sua internet e tente novamente.');
     } finally {
       if (!isRefresh) setCarregando(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
-  const verificarNovosPostsBackground = async () => {
-    try {
-      const resposta = await fetch('https://app-igreja-eks0.onrender.com/mural', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (resposta.ok) {
-        const dadosNovos = await resposta.json();
-        if (dadosNovos.length > 0 && posts.length > 0) {
-          if (dadosNovos[0].id > posts[0].id) {
-            setTemNovosPosts(true);
-          }
-        }
+  useFocusEffect(useCallback(() => {
+    let ativo = true;
+    void (async () => {
+      try {
+        const usuario = await refreshSession();
+        if (ativo && usuario) setUsuarioLogado(usuario);
+        if (ativo) await buscarPosts(false);
+      } catch {
+        if (ativo) setErroCarregamento('Falha de conexão. Verifique sua internet e tente novamente.');
       }
-    } catch (error) {
-      // Silencioso
-    }
-  };
+    })();
+    return () => { ativo = false; };
+  }, [buscarPosts, setUsuarioLogado]));
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    if (token) {
-      buscarPosts(token, true);
-    } else {
-      setRefreshing(false);
-    }
-  }, [token]);
+    void buscarPosts(true);
+  }, [buscarPosts]);
+
+  const podeInteragir = canInteract(usuarioLogado);
 
   const curtirPost = async (postId: number) => {
+    if (!podeInteragir) return;
+    const anterior = postsCurtidas[postId] || { total: 0, curtiu: false };
     setPostsCurtidas(prev => {
       const atual = prev[postId] || { total: 0, curtiu: false };
       return {
@@ -191,16 +160,17 @@ export default function TelaEventos() {
     });
 
     try {
-      await fetch(`https://app-igreja-eks0.onrender.com/mural/${postId}/curtir`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-    } catch (error) {
-      console.error("Erro ao curtir:", error);
+      const resposta = await authenticatedFetch(`/mural/${postId}/curtir`, { method: 'POST' });
+      if (!resposta.ok) throw new Error('LIKE_FAILED');
+    } catch {
+      setPostsCurtidas(prev => ({ ...prev, [postId]: anterior }));
+      Alert.alert('Não foi possível curtir', 'Tente novamente em alguns instantes.');
     }
   };
 
   const curtirComentario = async (comentarioId: number) => {
+    if (!podeInteragir) return;
+    const anterior = comentariosCurtidas[comentarioId] || { total: 0, curtiu: false };
     setComentariosCurtidas(prev => {
       const atual = prev[comentarioId] || { total: 0, curtiu: false };
       return {
@@ -213,12 +183,11 @@ export default function TelaEventos() {
     });
 
     try {
-      await fetch(`https://app-igreja-eks0.onrender.com/comentarios/${comentarioId}/curtir`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-    } catch (error) {
-      console.error("Erro ao curtir comentário:", error);
+      const resposta = await authenticatedFetch(`/comentarios/${comentarioId}/curtir`, { method: 'POST' });
+      if (!resposta.ok) throw new Error('LIKE_FAILED');
+    } catch {
+      setComentariosCurtidas(prev => ({ ...prev, [comentarioId]: anterior }));
+      Alert.alert('Não foi possível curtir', 'Tente novamente em alguns instantes.');
     }
   };
 
@@ -230,9 +199,7 @@ export default function TelaEventos() {
 
   const carregarComentarios = async (postId: number) => {
     try {
-      const resp = await fetch(`https://app-igreja-eks0.onrender.com/mural/${postId}/comentarios`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
+      const resp = await authenticatedFetch(`/mural/${postId}/comentarios`);
       if (resp.ok) {
         const dados = await resp.json();
         setComentarios(dados);
@@ -242,19 +209,22 @@ export default function TelaEventos() {
           mapC[c.id] = { total: parseInt(c.total_curtidas) || 0, curtiu: c.curtiu_por_mim };
         });
         setComentariosCurtidas(mapC);
+      } else {
+        const dados = await resp.json().catch(() => ({}));
+        Alert.alert('Erro', dados.erro || 'Não foi possível carregar os comentários.');
       }
-    } catch (error) {
-      console.error("Erro ao carregar comentários:", error);
+    } catch {
+      Alert.alert('Erro', 'Falha de conexão ao carregar os comentários.');
     }
   };
 
   const enviarComentario = async () => {
-    if (!textoComentario.trim() || !postSelecionadoId) return;
+    if (!podeInteragir || !textoComentario.trim() || !postSelecionadoId) return;
 
     try {
-      const resp = await fetch(`https://app-igreja-eks0.onrender.com/mural/${postSelecionadoId}/comentarios`, {
+      const resp = await authenticatedFetch(`/mural/${postSelecionadoId}/comentarios`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           texto: textoComentario,
           parent_id: respostaPara ? respostaPara.id : null
@@ -265,8 +235,11 @@ export default function TelaEventos() {
         setTextoComentario('');
         setRespostaPara(null);
         await carregarComentarios(postSelecionadoId);
+      } else {
+        const dados = await resp.json().catch(() => ({}));
+        Alert.alert('Erro', dados.erro || 'Não foi possível enviar o comentário.');
       }
-    } catch (error) {
+    } catch {
       Alert.alert("Erro", "Não foi possível enviar o comentário.");
     }
   };
@@ -279,17 +252,14 @@ export default function TelaEventos() {
         style: "destructive",
         onPress: async () => {
           try {
-            const resp = await fetch(`https://app-igreja-eks0.onrender.com/mural/${postId}`, {
-              method: 'DELETE',
-              headers: { 'Authorization': `Bearer ${token}` }
-            });
+            const resp = await authenticatedFetch(`/mural/${postId}`, { method: 'DELETE' });
             if (resp.ok) {
               setPosts(posts.filter(p => p.id !== postId));
               if (posts.length <= 1) setModoFullscreen(false);
             } else {
               Alert.alert("Erro", "Você não tem permissão para excluir este post.");
             }
-          } catch (error) {
+          } catch {
             Alert.alert("Erro", "Falha na conexão.");
           }
         }
@@ -300,7 +270,7 @@ export default function TelaEventos() {
   const podeExcluirPost = (post: any) => {
     if (!usuarioLogado) return false;
     if (usuarioLogado.nivel_acesso === 'MASTER') return true;
-    if (usuarioLogado.nivel_acesso === 'ADMIN' && post.congregacao_id === usuarioLogado.congregacao_id) return true;
+    if (usuarioLogado.nivel_acesso === 'ADMIN' && usuarioLogado.status_conta === 'APROVADO' && post.congregacao_id === usuarioLogado.congregacao_id) return true;
     return false;
   };
 
@@ -361,14 +331,14 @@ export default function TelaEventos() {
         ) : null}
 
         <View style={styles.postActionsFooter} onStartShouldSetResponder={() => true}>
-          <TouchableOpacity style={styles.actionButton} onPress={() => curtirPost(post.id)}>
+          {podeInteragir && <TouchableOpacity style={styles.actionButton} onPress={() => curtirPost(post.id)} accessibilityRole="button" accessibilityLabel="Curtir publicação">
             <Ionicons name={curInfo.curtiu ? "heart" : "heart-outline"} size={22} color={curInfo.curtiu ? "#E63946" : "#444"} />
             <Text style={[styles.actionCount, curInfo.curtiu && { color: '#E63946', fontWeight: 'bold' }]}>
               {curInfo.total}
             </Text>
-          </TouchableOpacity>
+          </TouchableOpacity>}
 
-          <TouchableOpacity style={styles.actionButton} onPress={() => abrirComentarios(post.id)}>
+          <TouchableOpacity style={styles.actionButton} onPress={() => abrirComentarios(post.id)} accessibilityRole="button" accessibilityLabel="Ver comentários">
             <Ionicons name="chatbubble-outline" size={20} color="#444" />
             <Text style={styles.actionCount}>Comentar</Text>
           </TouchableOpacity>
@@ -388,10 +358,10 @@ export default function TelaEventos() {
         <View style={styles.fullscreenMediaLayer}>
           {post.midia ? (
             post.tipo === 'video' ? (
-              <TouchableOpacity style={styles.videoFullscreenPlaceholder} onPress={() => Linking.openURL(post.midia)}>
+              <View style={styles.videoFullscreenPlaceholder}>
                 <Ionicons name="play-circle" size={70} color="#fff" />
-                <Text style={styles.videoTextLarge}>Assistir Vídeo</Text>
-              </TouchableOpacity>
+                <Text style={styles.videoTextLarge}>Vídeo indisponível nesta versão</Text>
+              </View>
             ) : (
               <Image source={{ uri: post.midia }} style={styles.fullscreenImage} resizeMode="contain" />
             )
@@ -409,10 +379,10 @@ export default function TelaEventos() {
 
         {/* Ícones Flutuantes na Lateral Direita */}
         <View style={styles.floatingRightControls}>
-          <TouchableOpacity style={styles.floatingActionClean} onPress={() => curtirPost(post.id)}>
+          {podeInteragir && <TouchableOpacity style={styles.floatingActionClean} onPress={() => curtirPost(post.id)} accessibilityRole="button" accessibilityLabel="Curtir publicação">
             <Ionicons name={curInfo.curtiu ? "heart" : "heart-outline"} size={36} color={curInfo.curtiu ? "#E63946" : "#fff"} style={styles.dropShadow} />
             <Text style={[styles.floatingTextClean, styles.dropShadowText]}>{curInfo.total}</Text>
-          </TouchableOpacity>
+          </TouchableOpacity>}
 
           <TouchableOpacity style={styles.floatingActionClean} onPress={() => abrirComentarios(post.id)}>
             <Ionicons name="chatbubble-outline" size={32} color="#fff" style={styles.dropShadow} />
@@ -473,7 +443,7 @@ export default function TelaEventos() {
             disableIntervalMomentum
             bounces={false}
             overScrollMode="never"
-            initialScrollIndex={Math.min(indiceAtualRef.current, Math.max(posts.length - 1, 0))}
+            initialScrollIndex={Math.min(indiceInicial, Math.max(posts.length - 1, 0))}
             getItemLayout={(data, index) => ({ length: alturaPagina, offset: alturaPagina * index, index })}
             initialNumToRender={1}
             maxToRenderPerBatch={2}
@@ -513,16 +483,16 @@ export default function TelaEventos() {
                       <View key={c.id} style={[styles.comentarioItem, c.parent_id && { marginLeft: 25, borderLeftWidth: 2, borderLeftColor: '#2A4B4C', paddingLeft: 10 }]}>
                         <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2}}>
                           <Text style={styles.comentarioAutor}>{c.autor}</Text>
-                          <TouchableOpacity style={{flexDirection: 'row', alignItems: 'center'}} onPress={() => curtirComentario(c.id)}>
+                          {podeInteragir && <TouchableOpacity style={{flexDirection: 'row', alignItems: 'center'}} onPress={() => curtirComentario(c.id)}>
                             <Ionicons name={comCur.curtiu ? "heart" : "heart-outline"} size={16} color={comCur.curtiu ? "#E63946" : "#777"} />
                             <Text style={{fontSize: 12, color: '#777', marginLeft: 4}}>{comCur.total}</Text>
-                          </TouchableOpacity>
+                          </TouchableOpacity>}
                         </View>
                         <Text style={styles.comentarioTexto}>{c.texto}</Text>
                         
-                        <TouchableOpacity onPress={() => setRespostaPara(c)} style={{marginTop: 4}}>
+                        {podeInteragir && <TouchableOpacity onPress={() => setRespostaPara(c)} style={{marginTop: 4}}>
                           <Text style={styles.responderText}>Responder</Text>
-                        </TouchableOpacity>
+                        </TouchableOpacity>}
                       </View>
                     );
                   })
@@ -538,7 +508,7 @@ export default function TelaEventos() {
                 </View>
               )}
 
-              <View style={styles.comentarioInputRow}>
+              {podeInteragir && <View style={styles.comentarioInputRow}>
                 <TextInput 
                   style={styles.comentarioInput} 
                   placeholder="Escreva um comentário..." 
@@ -549,7 +519,7 @@ export default function TelaEventos() {
                 <TouchableOpacity style={styles.enviarComentarioBtn} onPress={enviarComentario}>
                   <Ionicons name="send" size={18} color="#fff" />
                 </TouchableOpacity>
-              </View>
+              </View>}
             </View>
           </View>
         </Modal>
@@ -561,22 +531,23 @@ export default function TelaEventos() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Eventos da Igreja</Text>
-        {usuarioLogado && (usuarioLogado.nivel_acesso === 'MASTER' || usuarioLogado.nivel_acesso === 'ADMIN') && (
+        {usuarioLogado && canManage(usuarioLogado) && (
           <TouchableOpacity onPress={() => router.push('/criar-post' as any)} style={styles.newPostBtn}>
             <Ionicons name="add" size={24} color="#fff" />
           </TouchableOpacity>
         )}
       </View>
 
-      {temNovosPosts && (
-        <TouchableOpacity style={styles.bannerNovosPosts} onPress={() => buscarPosts(token, false)}>
-          <Ionicons name="arrow-up-circle" size={20} color="#fff" style={{ marginRight: 8 }} />
-          <Text style={styles.bannerNovosPostsText}>Novos posts disponíveis • Toque para atualizar</Text>
-        </TouchableOpacity>
-      )}
-
       {carregando ? (
         <ActivityIndicator size="large" color="#2A4B4C" style={{ marginTop: 50 }} />
+      ) : erroCarregamento ? (
+        <View style={styles.emptyBox}>
+          <Ionicons name="cloud-offline-outline" size={50} color="#C4C2B7" />
+          <Text accessibilityRole="alert" style={styles.emptyText}>{erroCarregamento}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={() => void buscarPosts(false)} accessibilityRole="button">
+            <Text style={styles.retryText}>Tentar novamente</Text>
+          </TouchableOpacity>
+        </View>
       ) : posts.length === 0 ? (
         <View style={styles.emptyBox}>
           <Ionicons name="newspaper-outline" size={50} color="#C4C2B7" />
@@ -616,16 +587,16 @@ export default function TelaEventos() {
                     <View key={c.id} style={[styles.comentarioItem, c.parent_id && { marginLeft: 25, borderLeftWidth: 2, borderLeftColor: '#2A4B4C', paddingLeft: 10 }]}>
                       <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2}}>
                         <Text style={styles.comentarioAutor}>{c.autor}</Text>
-                        <TouchableOpacity style={{flexDirection: 'row', alignItems: 'center'}} onPress={() => curtirComentario(c.id)}>
+                        {podeInteragir && <TouchableOpacity style={{flexDirection: 'row', alignItems: 'center'}} onPress={() => curtirComentario(c.id)}>
                           <Ionicons name={comCur.curtiu ? "heart" : "heart-outline"} size={16} color={comCur.curtiu ? "#E63946" : "#777"} />
                           <Text style={{fontSize: 12, color: '#777', marginLeft: 4}}>{comCur.total}</Text>
-                        </TouchableOpacity>
+                        </TouchableOpacity>}
                       </View>
                       <Text style={styles.comentarioTexto}>{c.texto}</Text>
                       
-                      <TouchableOpacity onPress={() => setRespostaPara(c)} style={{marginTop: 4}}>
+                      {podeInteragir && <TouchableOpacity onPress={() => setRespostaPara(c)} style={{marginTop: 4}}>
                         <Text style={styles.responderText}>Responder</Text>
-                      </TouchableOpacity>
+                      </TouchableOpacity>}
                     </View>
                   );
                 })
@@ -641,7 +612,7 @@ export default function TelaEventos() {
               </View>
             )}
 
-            <View style={styles.comentarioInputRow}>
+            {podeInteragir && <View style={styles.comentarioInputRow}>
               <TextInput 
                 style={styles.comentarioInput} 
                 placeholder="Escreva um comentário..." 
@@ -652,7 +623,7 @@ export default function TelaEventos() {
               <TouchableOpacity style={styles.enviarComentarioBtn} onPress={enviarComentario}>
                 <Ionicons name="send" size={18} color="#fff" />
               </TouchableOpacity>
-            </View>
+            </View>}
           </View>
         </View>
       </Modal>
@@ -671,6 +642,8 @@ const styles = StyleSheet.create({
 
   emptyBox: { alignItems: 'center', marginTop: 50, padding: 20 },
   emptyText: { color: '#666', fontSize: 14, marginTop: 10 },
+  retryButton: { backgroundColor: '#2A4B4C', marginTop: 16, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 8 },
+  retryText: { color: '#fff', fontWeight: 'bold' },
 
   // Estilos Feed Normal
   postCard: { backgroundColor: '#fff', borderRadius: 12, marginBottom: 20, overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5, elevation: 2 },

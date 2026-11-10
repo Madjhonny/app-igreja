@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { apiFetch } from '@/services/session';
+import React, { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal, FlatList, Image, KeyboardAvoidingView, Platform } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -27,6 +28,9 @@ export default function TelaRegistro() {
   const [foto, setFoto] = useState<string | null>(null);
   const [congregacaoId, setCongregacaoId] = useState<number | null>(null);
   const [congregacaoNome, setCongregacaoNome] = useState('Selecione sua congregação');
+  const [listaCongregacoes, setListaCongregacoes] = useState<{ id: number; nome: string }[]>([]);
+  const [carregandoCongregacoes, setCarregandoCongregacoes] = useState(true);
+  const [erroCongregacoes, setErroCongregacoes] = useState('');
   
   // === ESTADOS DE CONTROLE DE UI ===
   const [modalVisivel, setModalVisivel] = useState(false);
@@ -50,12 +54,24 @@ export default function TelaRegistro() {
     !!erro && styles.inputErro,
   ];
 
-  const listaCongregacoes = [
-    { id: 1, nome: 'Matriz' }, { id: 2, nome: 'Monan' }, { id: 3, nome: 'Sapê' },
-    { id: 4, nome: 'Matapaca' }, { id: 5, nome: 'Areia Grossa' }, { id: 6, nome: 'Maceió' },
-    { id: 7, nome: 'Morro da Vitória' }, { id: 8, nome: 'Paineiras' }, { id: 9, nome: 'Fazendinha' },
-    { id: 10, nome: 'Cafubá' }, { id: 11, nome: 'Viradouro' }
-  ];
+  const carregarCongregacoes = useCallback(async () => {
+    setErroCongregacoes('');
+    setCarregandoCongregacoes(true);
+    try {
+      const resposta = await apiFetch('/congregacoes');
+      const dados = await resposta.json();
+      if (!resposta.ok || !Array.isArray(dados)) throw new Error('INVALID_RESPONSE');
+      setListaCongregacoes(dados);
+    } catch {
+      setErroCongregacoes('Não foi possível carregar as congregações.');
+    } finally {
+      setCarregandoCongregacoes(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void Promise.resolve().then(carregarCongregacoes);
+  }, [carregarCongregacoes]);
 
   const escolherFoto = async () => {
     const permissao = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -73,7 +89,12 @@ export default function TelaRegistro() {
     });
 
     if (!resultado.canceled && resultado.assets[0].base64) {
-      setFoto(`data:image/jpeg;base64,${resultado.assets[0].base64}`);
+      const base64 = resultado.assets[0].base64;
+      if (Math.ceil(base64.length * 0.75) > 1_500_000) {
+        Alert.alert('Imagem muito grande', 'Escolha uma foto de até 1,5 MB.');
+        return;
+      }
+      setFoto(`data:image/jpeg;base64,${base64}`);
     }
   };
 
@@ -133,10 +154,14 @@ export default function TelaRegistro() {
       setErroSenha('As senhas não coincidem.');
       return Alert.alert('Erro', 'As senhas não coincidem. Verifique a digitação.');
     }
+    if (senha.length < 10 || !/[a-z]/.test(senha) || !/[A-Z]/.test(senha) || !/\d/.test(senha)) {
+      setErroSenha('Use ao menos 10 caracteres, com maiúscula, minúscula e número.');
+      return Alert.alert('Senha fraca', 'Use ao menos 10 caracteres, com maiúscula, minúscula e número.');
+    }
 
     setCarregando(true);
     try {
-      const resposta = await fetch('https://app-igreja-eks0.onrender.com/cadastro', {
+      const resposta = await apiFetch('/cadastro', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -156,7 +181,7 @@ export default function TelaRegistro() {
       } else {
         Alert.alert('Erro', dados.erro || 'Falha ao cadastrar.');
       }
-    } catch (error) {
+    } catch {
       Alert.alert('Erro de Conexão', 'Não foi possível conectar ao servidor.');
     } finally {
       setCarregando(false);
@@ -259,7 +284,7 @@ export default function TelaRegistro() {
                 onChangeText={(texto) => validarSenha(texto, confirmarSenha)} 
                 {...foco('senha')}
               />
-              <TouchableOpacity onPress={() => setMostrarSenha(!mostrarSenha)} style={styles.eyeIcon}>
+              <TouchableOpacity onPress={() => setMostrarSenha(!mostrarSenha)} style={styles.eyeIcon} accessibilityRole="button" accessibilityLabel={mostrarSenha ? 'Ocultar senha' : 'Mostrar senha'}>
                 <Ionicons name={mostrarSenha ? "eye-off" : "eye"} size={22} color={cores.verdeTexto} />
               </TouchableOpacity>
             </View>
@@ -276,17 +301,31 @@ export default function TelaRegistro() {
                 onChangeText={validarConfirmacaoSenha} 
                 {...foco('confirmarSenha')}
               />
-              <TouchableOpacity onPress={() => setMostrarConfirmarSenha(!mostrarConfirmarSenha)} style={styles.eyeIcon}>
+              <TouchableOpacity onPress={() => setMostrarConfirmarSenha(!mostrarConfirmarSenha)} style={styles.eyeIcon} accessibilityRole="button" accessibilityLabel={mostrarConfirmarSenha ? 'Ocultar confirmação de senha' : 'Mostrar confirmação de senha'}>
                 <Ionicons name={mostrarConfirmarSenha ? "eye-off" : "eye"} size={22} color={cores.verdeTexto} />
               </TouchableOpacity>
             </View>
             {erroSenha ? <Text style={styles.errorText}>{erroSenha}</Text> : null}
 
             <Text style={styles.label}>Sua Congregação</Text>
-            <TouchableOpacity style={styles.selectInput} onPress={() => setModalVisivel(true)} activeOpacity={0.8}>
+            <TouchableOpacity
+              style={styles.selectInput}
+              onPress={() => setModalVisivel(true)}
+              activeOpacity={0.8}
+              disabled={carregandoCongregacoes || !!erroCongregacoes}
+              accessibilityRole="button"
+              accessibilityLabel="Selecionar congregação"
+            >
               <Text style={[styles.selectText, congregacaoId !== null && styles.selectTextFilled]}>{congregacaoNome}</Text>
-              <Ionicons name="chevron-down" size={20} color={cores.verde} />
+              {carregandoCongregacoes
+                ? <ActivityIndicator size="small" color={cores.verde} />
+                : <Ionicons name="chevron-down" size={20} color={cores.verde} />}
             </TouchableOpacity>
+            {!!erroCongregacoes && (
+              <TouchableOpacity onPress={() => void carregarCongregacoes()} accessibilityRole="button">
+                <Text accessibilityRole="alert" style={styles.errorText}>{erroCongregacoes} Toque para tentar novamente.</Text>
+              </TouchableOpacity>
+            )}
 
             <TouchableOpacity
               style={[styles.saveButton, carregando && styles.buttonDisabled]}
