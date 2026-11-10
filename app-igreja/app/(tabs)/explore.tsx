@@ -268,9 +268,9 @@ export default function TelaEventos() {
   };
 
   const podeExcluirPost = (post: any) => {
-    if (!usuarioLogado) return false;
+    if (!usuarioLogado || !canManage(usuarioLogado)) return false;
     if (usuarioLogado.nivel_acesso === 'MASTER') return true;
-    if (usuarioLogado.nivel_acesso === 'ADMIN' && usuarioLogado.status_conta === 'APROVADO' && post.congregacao_id === usuarioLogado.congregacao_id) return true;
+    if (usuarioLogado.nivel_acesso === 'ADMIN' && post.congregacao_id === usuarioLogado.congregacao_id) return true;
     return false;
   };
 
@@ -340,7 +340,7 @@ export default function TelaEventos() {
 
           <TouchableOpacity style={styles.actionButton} onPress={() => abrirComentarios(post.id)} accessibilityRole="button" accessibilityLabel="Ver comentários">
             <Ionicons name="chatbubble-outline" size={20} color="#444" />
-            <Text style={styles.actionCount}>Comentar</Text>
+            <Text style={styles.actionCount}>{podeInteragir ? 'Comentar' : 'Ver comentários'}</Text>
           </TouchableOpacity>
         </View>
       </TouchableOpacity>
@@ -384,9 +384,9 @@ export default function TelaEventos() {
             <Text style={[styles.floatingTextClean, styles.dropShadowText]}>{curInfo.total}</Text>
           </TouchableOpacity>}
 
-          <TouchableOpacity style={styles.floatingActionClean} onPress={() => abrirComentarios(post.id)}>
+          <TouchableOpacity style={styles.floatingActionClean} onPress={() => abrirComentarios(post.id)} accessibilityRole="button" accessibilityLabel="Ver comentários">
             <Ionicons name="chatbubble-outline" size={32} color="#fff" style={styles.dropShadow} />
-            <Text style={[styles.floatingTextClean, styles.dropShadowText]}>Comentar</Text>
+            <Text style={[styles.floatingTextClean, styles.dropShadowText]}>{podeInteragir ? 'Comentar' : 'Comentários'}</Text>
           </TouchableOpacity>
         </View>
 
@@ -474,7 +474,7 @@ export default function TelaEventos() {
 
               <ScrollView style={{ maxHeight: 320, marginBottom: 15 }}>
                 {comentarios.length === 0 ? (
-                  <Text style={styles.emptyComentarios}>Nenhum comentário ainda. Seja o primeiro a comentar!</Text>
+                  <Text style={styles.emptyComentarios}>{podeInteragir ? 'Nenhum comentário ainda. Seja o primeiro a comentar!' : 'Nenhum comentário disponível.'}</Text>
                 ) : (
                   comentarios.map((c) => {
                     const comCur = comentariosCurtidas[c.id] || { total: parseInt(c.total_curtidas) || 0, curtiu: c.curtiu_por_mim };
@@ -578,7 +578,7 @@ export default function TelaEventos() {
 
             <ScrollView style={{ maxHeight: 320, marginBottom: 15 }}>
               {comentarios.length === 0 ? (
-                <Text style={styles.emptyComentarios}>Nenhum comentário ainda. Seja o primeiro a comentar!</Text>
+                <Text style={styles.emptyComentarios}>{podeInteragir ? 'Nenhum comentário ainda. Seja o primeiro a comentar!' : 'Nenhum comentário disponível.'}</Text>
               ) : (
                 comentarios.map((c) => {
                   const comCur = comentariosCurtidas[c.id] || { total: parseInt(c.total_curtidas) || 0, curtiu: c.curtiu_por_mim };

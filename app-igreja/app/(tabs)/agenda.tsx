@@ -380,9 +380,9 @@ export default function TelaAgenda() {
               ) : null}
             </View>
 
-            {usuario && (
-              usuario.nivel_acesso === 'MASTER' || 
-              (usuario.nivel_acesso === 'ADMIN' && usuario.status_conta === 'APROVADO' && usuario.congregacao_id === eventoSelecionado?.congregacao_id)
+            {usuario && canManage(usuario) && (
+              usuario.nivel_acesso === 'MASTER' ||
+              (usuario.nivel_acesso === 'ADMIN' && usuario.congregacao_id === eventoSelecionado?.congregacao_id)
             ) && (
               <View style={styles.managementActions}>
                 <TouchableOpacity
