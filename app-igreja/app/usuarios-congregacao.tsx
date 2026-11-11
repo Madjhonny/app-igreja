@@ -1,4 +1,4 @@
-import { useAppAlert } from '@/components/app-dialog';
+import { useAppDialog } from '@/components/app-dialog';
 import { useSessionUser } from '@/hooks/use-session-user';
 import { apiFetch, authenticatedFetch, canManage, getSessionToken, getStoredUser } from '@/services/session';
 import React, { useState, useCallback } from 'react';
@@ -7,7 +7,7 @@ import { router, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router
 import { Ionicons } from '@expo/vector-icons';
 
 export default function TelaUsuariosCongregacao() {
-  const Alert = useAppAlert();
+  const { alert: mostrarDialogo } = useAppDialog();
   const { congregacaoNome } = useLocalSearchParams();
   const [usuarios, setUsuarios] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(false);
@@ -44,7 +44,7 @@ export default function TelaUsuariosCongregacao() {
         router.back();
       }
     } catch {
-      Alert.alert('Erro', 'Falha na conexão com o servidor.');
+      mostrarDialogo('Erro', 'Falha na conexão com o servidor.');
     } finally {
       setCarregando(false);
     }
@@ -66,7 +66,7 @@ export default function TelaUsuariosCongregacao() {
         setUsuarioSelecionado({ ...usuarioSelecionado, status_conta: novoStatus });
         void carregarDadosIniciais();
       }
-    } catch { Alert.alert('Erro', 'Falha na conexão.'); }
+    } catch { mostrarDialogo('Erro', 'Falha na conexão.'); }
   };
 
   const alterarNivel = async (novoNivel: string) => {
@@ -81,7 +81,7 @@ export default function TelaUsuariosCongregacao() {
         setUsuarioSelecionado({ ...usuarioSelecionado, nivel_acesso: novoNivel });
         void carregarDadosIniciais();
       }
-    } catch { Alert.alert('Erro', 'Falha na conexão.'); }
+    } catch { mostrarDialogo('Erro', 'Falha na conexão.'); }
   };
 
   const alterarCongregacao = async (novaCongregacaoId: number, nomeNovaCongregacao: string) => {
@@ -96,12 +96,12 @@ export default function TelaUsuariosCongregacao() {
         const dados = await resposta.json();
         setUsuarioSelecionado(dados.usuario);
         void carregarDadosIniciais();
-        Alert.alert("Sucesso", `Congregação alterada para ${nomeNovaCongregacao} com sucesso!`);
+        mostrarDialogo("Sucesso", `Congregação alterada para ${nomeNovaCongregacao} com sucesso!`);
       } else {
         const err = await resposta.json();
-        Alert.alert("Erro", err.erro || "Não foi possível alterar a congregação.");
+        mostrarDialogo("Erro", err.erro || "Não foi possível alterar a congregação.");
       }
-    } catch { Alert.alert('Erro', 'Falha na conexão.'); }
+    } catch { mostrarDialogo('Erro', 'Falha na conexão.'); }
   };
 
   const abrirDetalhes = (usuario: any) => {
