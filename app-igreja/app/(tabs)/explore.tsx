@@ -661,11 +661,15 @@ export default function TelaEventos() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Eventos da Igreja</Text>
-        {usuarioLogado && canManage(usuarioLogado) && (
+        {/* Espaços simétricos preservam o título centralizado com ou sem botão de criar post. */}
+        <View style={styles.headerSideSlot} />
+        <Text style={styles.headerTitle}>Eventos</Text>
+        {usuarioLogado && canManage(usuarioLogado) ? (
           <TouchableOpacity onPress={() => router.push('/criar-post' as any)} style={styles.newPostBtn}>
             <Ionicons name="add" size={24} color="#fff" />
           </TouchableOpacity>
+        ) : (
+          <View style={styles.headerSideSlot} />
         )}
       </View>
 
@@ -817,8 +821,9 @@ export default function TelaEventos() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F7F5EC' },
   header: { backgroundColor: '#2A4B4C', paddingTop: 50, paddingBottom: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20 },
-  headerTitle: { color: '#F7F5EC', fontSize: 20, fontWeight: 'bold' },
-  newPostBtn: { backgroundColor: '#3A6364', padding: 8, borderRadius: 20 },
+  headerTitle: { color: '#F7F5EC', fontSize: 20, fontWeight: 'bold', flex: 1, textAlign: 'center' },
+  headerSideSlot: { width: 40, height: 40 },
+  newPostBtn: { backgroundColor: '#3A6364', padding: 8, borderRadius: 20, width: 40, height: 40 },
 
   bannerNovosPosts: { backgroundColor: '#2A4B4C', paddingVertical: 10, paddingHorizontal: 15, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', elevation: 3 },
   bannerNovosPostsText: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
