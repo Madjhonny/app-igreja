@@ -1,4 +1,3 @@
-import { useAppDialog } from '@/components/app-dialog';
 import { authenticatedFetch, canManage, getStoredUser } from '@/services/session';
 import { useSessionUser } from '@/hooks/use-session-user';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -129,7 +128,6 @@ const PaginaMes = React.memo(function PaginaMes({ ano, mes, eventos, largura, es
 });
 
 export default function TelaAgenda() {
-  const { alert: mostrarDialogo } = useAppDialog();
   const [usuario, setUsuario] = useSessionUser();
   const [mesAtual, setMesAtual] = useState(new Date().getMonth());
   const [anoAtual, setAnoAtual] = useState(new Date().getFullYear());
@@ -143,6 +141,10 @@ export default function TelaAgenda() {
   // Estados do Modal de Detalhes do Evento
   const [modalDetalhesVisivel, setModalDetalhesVisivel] = useState(false);
   const [eventoSelecionado, setEventoSelecionado] = useState<any>(null);
+  const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
+  const [excluindoEvento, setExcluindoEvento] = useState(false);
+  const [erroExclusao, setErroExclusao] = useState('');
+  const [avisoAgenda, setAvisoAgenda] = useState('');
 
   const carregarUsuario = useCallback(async () => {
     const user = await getStoredUser();
@@ -288,34 +290,53 @@ export default function TelaAgenda() {
 
   const abrirDetalhesEvento = (evento: any) => {
     setEventoSelecionado(evento);
+    setConfirmandoExclusao(false);
+    setErroExclusao('');
     setModalDetalhesVisivel(true);
   };
 
-  const confirmarExclusao = (eventoId: number) => {
-    mostrarDialogo(
-      "Excluir Evento",
-      "Tem certeza que deseja excluir este evento?",
-      [
-        { text: "Cancelar", style: "cancel" },
-        { text: "Excluir", style: "destructive", onPress: () => excluirEvento(eventoId) }
-      ]
-    );
+  const cancelarExclusao = () => {
+    if (excluindoEvento) return;
+    setConfirmandoExclusao(false);
+    setErroExclusao('');
+  };
+
+  const fecharDetalhes = () => {
+    if (excluindoEvento) return;
+    if (confirmandoExclusao) {
+      cancelarExclusao();
+      return;
+    }
+    setModalDetalhesVisivel(false);
+  };
+
+  const confirmarExclusao = () => {
+    setErroExclusao('');
+    setConfirmandoExclusao(true);
   };
 
   const excluirEvento = async (eventoId: number) => {
+    if (excluindoEvento) return;
+    setExcluindoEvento(true);
+    setErroExclusao('');
     try {
       const resposta = await authenticatedFetch(`/eventos/${eventoId}`, { method: 'DELETE' });
 
       if (resposta.ok) {
+        // Atualiza a agenda local sem exibir outro modal nem mostrar carregamento global.
+        setEventosDoMes(atuais => atuais.filter(ev => Number(ev.id) !== Number(eventoId)));
         setModalDetalhesVisivel(false);
-        void buscarEventosDoMes(mesAtual + 1, anoAtual);
-        mostrarDialogo("Sucesso", "Evento excluído com sucesso!");
+        setConfirmandoExclusao(false);
+        setEventoSelecionado(null);
+        setAvisoAgenda('Evento excluído com sucesso!');
       } else {
-        const dados = await resposta.json();
-        mostrarDialogo("Erro", dados.erro || "Não foi possível excluir o evento.");
+        const dados = await resposta.json().catch(() => ({}));
+        setErroExclusao(dados.erro || 'Não foi possível excluir o evento.');
       }
     } catch {
-      mostrarDialogo("Erro", "Falha de conexão com o servidor.");
+      setErroExclusao('Falha de conexão com o servidor. Tente novamente.');
+    } finally {
+      setExcluindoEvento(false);
     }
   };
 
@@ -326,6 +347,16 @@ export default function TelaAgenda() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Agenda da Igreja</Text>
       </View>
+
+      {avisoAgenda ? (
+        <View style={styles.feedbackBar}>
+          <Ionicons name="checkmark-circle-outline" size={19} color={cores.verde} />
+          <Text accessibilityRole="alert" style={styles.feedbackText}>{avisoAgenda}</Text>
+          <TouchableOpacity accessibilityLabel="Fechar aviso" onPress={() => setAvisoAgenda('')}>
+            <Ionicons name="close" size={18} color={cores.verde} />
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
       <View style={styles.painel}>
         <ScrollView
@@ -450,10 +481,52 @@ export default function TelaAgenda() {
       </View>
 
       {/* MODAL DE DETALHES E PERMISSÃO DE EXCLUSÃO */}
-      <Modal visible={modalDetalhesVisivel} animationType="slide" transparent={true} onRequestClose={() => setModalDetalhesVisivel(false)}>
+      <Modal visible={modalDetalhesVisivel} animationType="slide" transparent={true} onRequestClose={fecharDetalhes}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <TouchableOpacity accessibilityLabel="Fechar detalhes" style={styles.closeModalButton} onPress={() => setModalDetalhesVisivel(false)} activeOpacity={0.7}>
+            {confirmandoExclusao ? (
+              <>
+                <View style={styles.confirmacaoIcone}>
+                  <Ionicons name="trash-outline" size={25} color={cores.erro} />
+                </View>
+                <Text style={styles.modalEventTitle}>Excluir evento?</Text>
+                <Text style={styles.confirmacaoMensagem}>
+                  Tem certeza que deseja excluir "{eventoSelecionado?.titulo}" da agenda?
+                </Text>
+                {erroExclusao ? (
+                  <Text accessibilityRole="alert" style={styles.confirmacaoErro}>{erroExclusao}</Text>
+                ) : null}
+                <View style={styles.managementActions}>
+                  <TouchableOpacity
+                    style={styles.cancelButtonModal}
+                    onPress={cancelarExclusao}
+                    disabled={excluindoEvento}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.cancelButtonText}>Cancelar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.deleteButtonModal, excluindoEvento && { opacity: 0.6 }]}
+                    onPress={() => {
+                      if (eventoSelecionado?.id != null) void excluirEvento(eventoSelecionado.id);
+                    }}
+                    disabled={excluindoEvento}
+                    accessibilityRole="button"
+                  >
+                    {excluindoEvento ? (
+                      <ActivityIndicator color={cores.branco} />
+                    ) : (
+                      <Ionicons name="trash-outline" size={18} color={cores.branco} style={{ marginRight: 8 }} />
+                    )}
+                    <Text style={styles.deleteButtonText}>
+                      {excluindoEvento ? 'Excluindo...' : 'Excluir'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <TouchableOpacity accessibilityLabel="Fechar detalhes" style={styles.closeModalButton} onPress={fecharDetalhes} activeOpacity={0.7}>
               <Ionicons name="close" size={20} color={cores.verde} />
             </TouchableOpacity>
 
@@ -504,11 +577,13 @@ export default function TelaAgenda() {
                   <Ionicons name="create-outline" size={18} color={cores.branco} style={{ marginRight: 8 }} />
                   <Text style={styles.deleteButtonText}>Editar</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.deleteButtonModal} onPress={() => confirmarExclusao(eventoSelecionado.id)} activeOpacity={0.85}>
+                <TouchableOpacity style={styles.deleteButtonModal} onPress={confirmarExclusao} activeOpacity={0.85}>
                   <Ionicons name="trash-outline" size={18} color={cores.branco} style={{ marginRight: 8 }} />
                   <Text style={styles.deleteButtonText}>Excluir</Text>
                 </TouchableOpacity>
               </View>
+            )}
+              </>
             )}
           </View>
         </View>
@@ -524,6 +599,8 @@ const styles = StyleSheet.create({
   // Cabeçalho
   header: { backgroundColor: cores.verde, paddingTop: 52, paddingBottom: 26, alignItems: 'center' },
   headerTitle: { color: cores.bege, fontSize: 20, fontWeight: '700', letterSpacing: 0.3 },
+  feedbackBar: { backgroundColor: cores.suave, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 20, paddingVertical: 11 },
+  feedbackText: { flex: 1, color: cores.verde, fontSize: 14, fontWeight: '600' },
 
   // Painel claro com cantos superiores arredondados sobre o cabeçalho verde
   painel: { flex: 1, backgroundColor: cores.bege, borderTopLeftRadius: 28, borderTopRightRadius: 28, overflow: 'hidden' },
@@ -624,5 +701,10 @@ const styles = StyleSheet.create({
   managementActions: { flexDirection: 'row', gap: 10 },
   editButtonModal: { flex: 1, backgroundColor: cores.verde, height: 52, borderRadius: 14, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
   deleteButtonModal: { flex: 1, backgroundColor: cores.erro, height: 52, borderRadius: 14, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
+  cancelButtonModal: { flex: 1, backgroundColor: cores.suave, height: 52, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
+  cancelButtonText: { color: cores.verde, fontSize: 16, fontWeight: '700' },
+  confirmacaoIcone: { alignSelf: 'center', backgroundColor: '#FFE8E9', borderRadius: 28, width: 56, height: 56, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  confirmacaoMensagem: { color: cores.verde, fontSize: 15, lineHeight: 22, textAlign: 'center', marginBottom: 20 },
+  confirmacaoErro: { color: cores.erro, fontSize: 14, marginBottom: 16, textAlign: 'center' },
   deleteButtonText: { color: cores.branco, fontSize: 16, fontWeight: '700' }
 });
