@@ -1,11 +1,13 @@
+import { useAppAlert } from '@/components/app-dialog';
 import { authenticatedFetch, getStoredUser, storeSessionUser } from '@/services/session';
 import React, { useCallback, useState, useEffect } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Image } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Image } from 'react-native';
 import { router, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 
 export default function TelaEditarPerfil() {
+  const Alert = useAppAlert();
   const [nomeExibicao, setNomeExibicao] = useState('');
   const [bio, setBio] = useState('');
   const [foto, setFoto] = useState<string | null>(null);
