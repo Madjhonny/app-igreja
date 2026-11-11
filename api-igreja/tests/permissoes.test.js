@@ -6,7 +6,7 @@ const path = require('node:path');
 
 function setup(
   user = { id: 1, nivel_acesso: 'MEMBRO', status_conta: 'APROVADO', congregacao_id: 10 },
-  { statusTarget = null } = {}
+  { statusTarget = null, commentTarget = null } = {}
 ) {
   const routes = new Map();
   const queries = [];
@@ -21,6 +21,14 @@ function setup(
     if (sql.includes('SELECT id, nivel_acesso')) return { rows: currentUser ? [currentUser] : [], rowCount: currentUser ? 1 : 0 };
     if (sql.includes('SELECT id, nome_completo')) return {rows: currentUser ? [currentUser] : [], rowCount: currentUser ? 1 : 0};
     if (sql.includes('FROM usuarios WHERE LOWER(email)')) return { rows: currentUser ? [{...currentUser, senha_hash:'hash'}] : [] };
+    if (sql.includes('SELECT usuario_id FROM mural_comentarios WHERE id = $1')) {
+      const comentario = commentTarget && String(commentTarget.id) === String(values[0]) ? commentTarget : null;
+      return { rows: comentario ? [comentario] : [], rowCount: comentario ? 1 : 0 };
+    }
+    if (sql.includes('DELETE FROM mural_comentarios WHERE id = $1 RETURNING id')) {
+      const apagado = commentTarget && String(commentTarget.id) === String(values[0]) ? commentTarget : null;
+      return { rows: apagado ? [{ id: apagado.id }] : [], rowCount: apagado ? 1 : 0 };
+    }
     if (sql.includes('SELECT id, COALESCE(nome_exibicao')) {
       return { rows: currentUser ? [currentUser] : [], rowCount: currentUser ? 1 : 0 };
     }
@@ -49,8 +57,8 @@ function setup(
     jsonwebtoken: { verify(token) { if (token === 'bad') throw new Error('Invalid'); return { id: 1, nivel_acesso: 'MASTER', status_conta: 'APROVADO' }; }, sign: () => 'token' } };
   const source = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8').replace(/iniciarServidor\(\);\s*$/, '');
   vm.runInNewContext(source, { require: name => { if (!(name in mocks)) throw new Error(name); return mocks[name]; }, process: { env: { JWT_SECRET: 'test-only' } }, console: { error() {} } });
-  return { queries, failDB() { dbError = true; }, setUser(nextUser) { currentUser = nextUser; }, async call(method, url, body = {}, header = 'Bearer valid') {
-    const req = { headers: { authorization: header }, body, params: { id: '2' }, query: {} };
+  return { queries, failDB() { dbError = true; }, setUser(nextUser) { currentUser = nextUser; }, async call(method, url, body = {}, header = 'Bearer valid', paramId = '2') {
+    const req = { headers: { authorization: header }, body, params: { id: paramId }, query: {} };
     const res = { code: 200, headers: {}, set(k,v) { this.headers[k] = v; return this; }, status(c) { this.code = c; return this; }, json(data) { this.data = data; return this; } };
     const handlers = routes.get(`${method} ${url}`); assert.ok(handlers);
     let i = 0; const next = async () => { if (i < handlers.length) await handlers[i++](req, res, next); };
@@ -165,6 +173,59 @@ test('Pending members cannot like, comment, like comments, or delete comments', 
     assert.equal((await s.call(method,url,body)).code,403, `${method} ${url}`);
     assert.equal(s.queries.length, queriesBefore + 1, `${method} ${url} must not reach a mutation query`);
   }
+});
+
+test('MEMBRO aprovado pode excluir apenas o próprio comentário', async () => {
+  const autor = { id:1, nivel_acesso:'MEMBRO', status_conta:'APROVADO', congregacao_id:10 };
+  const s = setup(autor, { commentTarget: { id:2, usuario_id:1 } });
+  const response = await s.call('delete','/comentarios/:id');
+  assert.equal(response.code, 200);
+  assert.match(s.queries.at(-1).sql, /DELETE FROM mural_comentarios WHERE id = \$1 RETURNING id/);
+  assert.doesNotMatch(s.queries.at(-1).sql, /parent_id = \$1/);
+});
+
+test('MEMBRO não pode excluir comentário escrito por outra pessoa', async () => {
+  const membro = { id:1, nivel_acesso:'MEMBRO', status_conta:'APROVADO', congregacao_id:10 };
+  const s = setup(membro, { commentTarget: { id:2, usuario_id:55 } });
+  const response = await s.call('delete','/comentarios/:id');
+  assert.equal(response.code,403);
+  assert.ok(!s.queries.some(q => q.sql.includes('DELETE FROM mural_comentarios')));
+});
+
+test('ADMIN aprovado pode moderar comentário de qualquer congregação', async () => {
+  const admin = { id:1, nivel_acesso:'ADMIN', status_conta:'APROVADO', congregacao_id:10 };
+  const s = setup(admin, { commentTarget: { id:2, usuario_id:55, post_congregacao_id:77 } });
+  const response = await s.call('delete','/comentarios/:id');
+  assert.equal(response.code,200);
+  assert.ok(s.queries.some(q => q.sql.includes('DELETE FROM mural_comentarios')));
+});
+
+test('MASTER aprovado pode moderar qualquer comentário', async () => {
+  const master = { id:1, nivel_acesso:'MASTER', status_conta:'APROVADO', congregacao_id:null };
+  const s = setup(master, { commentTarget: { id:2, usuario_id:55 } });
+  assert.equal((await s.call('delete','/comentarios/:id')).code,200);
+});
+
+test('conta pendente não pode excluir nem seu próprio comentário', async () => {
+  const pendente = { id:1, nivel_acesso:'MEMBRO', status_conta:'PENDENTE', congregacao_id:10 };
+  const s = setup(pendente, { commentTarget: { id:2, usuario_id:1 } });
+  assert.equal((await s.call('delete','/comentarios/:id')).code,403);
+  assert.equal(s.queries.length,1);
+});
+
+test('comentário inexistente retorna 404 e não executa DELETE', async () => {
+  const admin = { id:1, nivel_acesso:'ADMIN', status_conta:'APROVADO', congregacao_id:10 };
+  const s = setup(admin);
+  const response = await s.call('delete','/comentarios/:id');
+  assert.equal(response.code,404);
+  assert.ok(!s.queries.some(q => q.sql.includes('DELETE FROM mural_comentarios')));
+});
+
+test('identificador de comentário inválido retorna 400 antes da consulta de comentário', async () => {
+  const s = setup({id:1,nivel_acesso:'MASTER',status_conta:'APROVADO',congregacao_id:null});
+  const response = await s.call('delete','/comentarios/:id',{},'Bearer valid','invalido');
+  assert.equal(response.code,400);
+  assert.equal(s.queries.length,1);
 });
 
 test('Pending members can log in without being promoted', async () => {
