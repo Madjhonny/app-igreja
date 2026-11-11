@@ -91,8 +91,7 @@ export default function TelaGestaoDatas() {
   }, [mensagemOperacao]);
 
   const mostrarAviso = (titulo: string, mensagem: string) => {
-    if (Platform.OS === 'web') window.alert(titulo + '\n\n' + mensagem);
-    else Alert.alert(titulo, mensagem);
+    Alert.alert(titulo, mensagem);
   };
 
   function formatarData(data: Date) {
@@ -574,40 +573,33 @@ export default function TelaGestaoDatas() {
 
       if (confirmacaoNecessaria) {
         const { resumo = {}, conflitos = [] } = confirmacaoNecessaria;
-        const detalhes = conflitos.slice(0, 3)
-          .map((item: any) => `• ${item.titulo} × ${item.evento_conflitante} (${item.origem})`);
-        const mensagem = [
-          'O servidor encontrou situações que exigem confirmação do MASTER:',
-          `Sobreposições: ${resumo.sobreposicoesEncontradas || 0}`,
-          `Marcados para revisar: ${resumo.revisar || 0}`,
-          `Marcados como conflito: ${resumo.marcadosConflito || 0}`,
-          ...detalhes,
-          '',
-          'Deseja publicar mesmo assim?',
-        ].join('\n');
-
-        // A segunda chamada ocorre apenas após o usuário aceitar o aviso real do servidor.
-        if (Platform.OS === 'web') {
-          if (window.confirm(mensagem)) void executarPublicacao(true);
-        } else {
-          Alert.alert('Conflitos ou pendências', mensagem, [
+        showDialog({
+          title: 'Conflitos ou pendências de publicação',
+          message: 'O servidor encontrou situações que exigem sua autorização. Verifique os eventos e as datas abaixo antes de prosseguir.',
+          details: [
+            { label: 'Sobreposições encontradas', value: resumo.sobreposicoesEncontradas || 0 },
+            { label: 'Eventos para revisar', value: resumo.revisar || 0 },
+            { label: 'Marcados como conflito', value: resumo.marcadosConflito || 0 },
+          ],
+          conflicts,
+          buttons: [
             { text: 'Voltar e revisar', style: 'cancel' },
-            { text: 'Publicar mesmo assim', onPress: () => void executarPublicacao(true) },
-          ]);
-        }
+            { text: 'Publicar mesmo assim', style: 'destructive',
+              onPress: () => void executarPublicacao(true) },
+          ],
+        });
       }
     };
 
     const aviso = 'Publicar os eventos planejados na Agenda geral? Os possíveis conflitos serão conferidos pelo servidor antes da publicação.';
-    if (Platform.OS === 'web') {
-      if (window.confirm(aviso)) void executarPublicacao();
-      return;
-    }
-
-    Alert.alert('Publicar na Agenda', aviso, [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Verificar e publicar', onPress: () => void executarPublicacao() },
-    ]);
+    showDialog({
+      title: 'Publicar na Agenda',
+      message: aviso,
+      buttons: [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Verificar e publicar', onPress: () => void executarPublicacao() },
+      ],
+    });
   };
 
   // =====================================================
