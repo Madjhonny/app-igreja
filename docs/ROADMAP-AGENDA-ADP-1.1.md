@@ -12,6 +12,7 @@ O Agenda ADP organiza **eventos únicos**, com duração de um ou mais dias, e o
 | --- | --- | --- |
 | Criar eventos na Web | Após salvar com sucesso, exibir diálogo visual do app e retornar à agenda | Implementada nesta branch; homologação pendente |
 | Excluir eventos na Web | Diálogo de confirmação próprio, exclusão na API, atualização da agenda | Implementada nesta branch; homologação pendente |
+| Exclusão pela lista de eventos (Web e Android) | Confirmação dentro do próprio modal de detalhes, sem sobreposição; cancelar preserva evento; sucesso atualiza sem recarga global | Corrigida nesta branch; homologação pendente |
 | Não recarregar a Gestão de Datas ao alterar registros | Criar, excluir, alterar marcador e publicar sem loading geral | Implementada na branch da etapa 1; homologada pelo usuário |
 | Conferir conflitos antes da publicação | API revalida contra publicados e dentro do lote, com rollback em erro | Implementada na etapa 2; avisos homologados pelo usuário |
 | Confirmação excepcional do MASTER | Exibir rascunhos e horários em conflito; confirmar apenas por decisão explícita | API e interface implementadas; homologação pendente |
