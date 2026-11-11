@@ -2,7 +2,7 @@ import { useAppAlert } from '@/components/app-dialog';
 import { useSessionUser } from '@/hooks/use-session-user';
 import { apiFetch, authenticatedFetch, refreshSession } from '@/services/session';
 import React, { useCallback, useEffect, useState } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, Platform } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal } from 'react-native';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -135,18 +135,13 @@ export default function TelaCriarEvento() {
           .map((ev: any) => '• ' + ev.titulo).join('\n');
         const aviso = 'Há eventos da mesma congregação neste horário:\n' + encontrados +
           '\n\nDeseja criar o evento mesmo assim?';
-        if (Platform.OS === 'web') {
-          if (window.confirm(aviso)) void criarEvento(true);
-        } else {
-          Alert.alert('Conflito de agenda', aviso, [
-            { text: 'Voltar e revisar', style: 'cancel' },
-            { text: 'Criar mesmo assim', onPress: () => void criarEvento(true) },
-          ]);
-        }
+        Alert.alert('Conflito de agenda', aviso, [
+          { text: 'Voltar e revisar', style: 'cancel' },
+          { text: 'Criar mesmo assim', onPress: () => void criarEvento(true) },
+        ]);
       } else {
         const avisoErro = dados.erro || 'Falha ao criar evento.';
-        if (Platform.OS === 'web') window.alert(avisoErro);
-        else Alert.alert('Erro', avisoErro);
+        Alert.alert('Erro', avisoErro);
       }
     } catch {
       Alert.alert('Erro', 'Não foi possível conectar ao servidor.');
