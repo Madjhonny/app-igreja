@@ -1332,8 +1332,8 @@ app.post('/gestao-datas/publicar', verificarToken, somenteMaster, async (req, re
     }
 
     await client.query(
-      'UPDATE gestao_datas_rascunho SET publicado = TRUE WHERE master_id = $1 AND publicado = FALSE',
-      [master_id]
+      'UPDATE gestao_datas_rascunho SET publicado = TRUE WHERE master_id = $1 AND id = ANY($2::integer[]) AND publicado = FALSE',
+      [master_id, rascunhos.map(r => r.id)]
     );
 
     await client.query('COMMIT');
