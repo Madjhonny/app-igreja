@@ -1233,11 +1233,13 @@ app.post('/gestao-datas/publicar', verificarToken, somenteMaster, async (req, re
 
     // Bloqueia os rascunhos até o fim da publicação para impedir duplicação.
     const rascunhosRes = await client.query(`
-      SELECT id, titulo, data_inicio::text AS data_inicio, data_fim::text AS data_fim,
-             horario::text AS horario, duracao_minutos, congregacao_id, legenda, marcador
-      FROM gestao_datas_rascunho
-      WHERE master_id = $1 AND publicado = FALSE
-      ORDER BY id FOR UPDATE;
+      SELECT r.id, r.titulo, r.data_inicio::text AS data_inicio, r.data_fim::text AS data_fim,
+             r.horario::text AS horario, r.duracao_minutos, r.congregacao_id,
+             r.legenda, r.marcador, c.nome AS congregacao
+      FROM gestao_datas_rascunho r
+      JOIN congregacoes c ON c.id = r.congregacao_id
+      WHERE r.master_id = $1 AND r.publicado = FALSE
+      ORDER BY r.id FOR UPDATE OF r;
     `, [master_id]);
 
     if (rascunhosRes.rowCount === 0) {
@@ -1253,27 +1255,39 @@ app.post('/gestao-datas/publicar', verificarToken, somenteMaster, async (req, re
     const fim = rascunhos.reduce((max, r) => r.data_fim > max ? r.data_fim : max, rascunhos[0].data_fim);
     const congregacoes = [...new Set(rascunhos.map(r => Number(r.congregacao_id)))];
     const publicadosRes = await client.query(`
-      SELECT id, titulo, data_inicio::text AS data_inicio, data_fim::text AS data_fim,
-             horario::text AS horario, COALESCE(duracao_minutos, 60) AS duracao_minutos,
-             congregacao_id
-      FROM eventos
-      WHERE congregacao_id = ANY($1::integer[])
-        AND data_inicio <= $3::date AND data_fim >= $2::date;
+      SELECT e.id, e.titulo, e.data_inicio::text AS data_inicio, e.data_fim::text AS data_fim,
+             e.horario::text AS horario, COALESCE(e.duracao_minutos, 60) AS duracao_minutos,
+             e.congregacao_id, c.nome AS congregacao
+      FROM eventos e
+      JOIN congregacoes c ON c.id = e.congregacao_id
+      WHERE e.congregacao_id = ANY($1::integer[])
+        AND e.data_inicio <= $3::date AND e.data_fim >= $2::date;
     `, [congregacoes, inicio, fim]);
 
     const conflitos = [];
     const idsComConflitos = new Set();
 
+    const detalharConflito = (rascunho, relacionado, origem) => ({
+      rascunho_id: rascunho.id,
+      titulo: rascunho.titulo,
+      data_inicio: rascunho.data_inicio,
+      data_fim: rascunho.data_fim,
+      horario: rascunho.horario,
+      duracao_minutos: rascunho.duracao_minutos || 60,
+      congregacao: rascunho.congregacao,
+      evento_conflitante: relacionado.titulo,
+      evento_conflitante_data_inicio: relacionado.data_inicio,
+      evento_conflitante_data_fim: relacionado.data_fim,
+      evento_conflitante_horario: relacionado.horario,
+      evento_conflitante_duracao_minutos: relacionado.duracao_minutos || 60,
+      origem,
+    });
+
     for (const rascunho of rascunhos) {
       for (const publicado of publicadosRes.rows) {
         if (!eventosSobrepostos(rascunho, publicado)) continue;
         idsComConflitos.add(rascunho.id);
-        conflitos.push({
-          rascunho_id: rascunho.id,
-          titulo: rascunho.titulo,
-          evento_conflitante: publicado.titulo,
-          origem: 'AGENDA PUBLICADA',
-        });
+        conflitos.push(detalharConflito(rascunho, publicado, 'AGENDA PUBLICADA'));
       }
     }
 
@@ -1285,12 +1299,7 @@ app.post('/gestao-datas/publicar', verificarToken, somenteMaster, async (req, re
         if (!eventosSobrepostos(a, b)) continue;
         idsComConflitos.add(a.id);
         idsComConflitos.add(b.id);
-        conflitos.push({
-          rascunho_id: a.id,
-          titulo: a.titulo,
-          evento_conflitante: b.titulo,
-          origem: 'PLANEJAMENTO',
-        });
+        conflitos.push(detalharConflito(a, b, 'PLANEJAMENTO'));
       }
     }
 
