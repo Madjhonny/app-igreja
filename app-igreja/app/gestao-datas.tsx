@@ -532,17 +532,9 @@ export default function TelaGestaoDatas() {
       }
     };
 
-    if (Platform.OS === 'web') {
-      if (window.confirm('Deseja realmente remover este evento do planejamento?')) {
-        void removerEvento();
-      }
-      return;
-    }
-
-    Alert.alert('Remover Evento', 'Deseja remover este evento do planejamento?', [
-      { text: 'Cancelar', style: 'cancel' },
-      { text: 'Remover', style: 'destructive', onPress: () => void removerEvento() },
-    ]);
+    // A própria opção "Remover do Planejamento" inicia a exclusão.
+    // Sem confirmação bloqueante na Web ou no Android.
+    void removerEvento();
   };
 
   // =====================================================
