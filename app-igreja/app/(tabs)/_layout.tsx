@@ -1,8 +1,7 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Animated, Easing, Platform, StyleSheet, View, useWindowDimensions } from 'react-native';
-import { Tabs } from 'expo-router';
-import { BottomTabBar } from '@react-navigation/bottom-tabs';
-import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
+import { Tabs, useSegments } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 
 const VERDE = '#2A4B4C';
@@ -12,12 +11,13 @@ const DURACAO_TRANSICAO = 270;
 const LARGURA_INDICADOR = 32;
 const suavizacao = Easing.inOut(Easing.cubic);
 const usarDriverNativo = Platform.OS !== 'web';
-
-// O indicador do rodapé e as cenas utilizam a mesma duração e curva.
-// Preservamos o Tabs e o BottomTabBar originais para não alterar a navegação.
-const DirecaoTransicao = createContext(0);
-
+const ordemAbas = ['agenda', 'explore', 'perfil'] as const;
+type NomeAba = (typeof ordemAbas)[number];
 type NomeIcone = keyof typeof Ionicons.glyphMap;
+
+// Conserva a barra padrão do Expo Router (tema, acessibilidade e fullscreen).
+// O indicador animado é apenas um fundo do tabBar, não um novo BottomTabBar.
+const DirecaoTransicao = createContext(0);
 
 function IconeAba({ nome, cor, selecionado }: { nome: NomeIcone; cor: string; selecionado: boolean }) {
   const direcao = useContext(DirecaoTransicao);
@@ -48,136 +48,130 @@ function IconeAba({ nome, cor, selecionado }: { nome: NomeIcone; cor: string; se
   );
 }
 
-function BarraAbasAnimada(props: BottomTabBarProps) {
-  const { state } = props;
-  const [larguraBarra, setLarguraBarra] = useState(0);
-  const progresso = useRef(new Animated.Value(state.index)).current;
-  const indiceAnterior = useRef(state.index);
-  const ultimaDirecao = useRef(0);
-
-  // O sentido vem da ordem real das abas: Agenda (0), Eventos (1), Perfil (2).
-  if (state.index !== indiceAnterior.current) {
-    ultimaDirecao.current = Math.sign(state.index - indiceAnterior.current);
-  }
+function FundoBarraAnimado({ indiceAtual }: { indiceAtual: number }) {
+  const { bottom } = useSafeAreaInsets();
+  const [largura, setLargura] = useState(0);
+  const progresso = useRef(new Animated.Value(indiceAtual)).current;
+  const indiceAnteriorRef = useRef(indiceAtual);
 
   useEffect(() => {
-    if (state.index === indiceAnterior.current) return;
-    indiceAnterior.current = state.index;
+    if (indiceAnteriorRef.current === indiceAtual) return;
+    indiceAnteriorRef.current = indiceAtual;
     progresso.stopAnimation();
     Animated.timing(progresso, {
-      toValue: state.index,
+      toValue: indiceAtual,
       duration: DURACAO_TRANSICAO,
       easing: suavizacao,
       useNativeDriver: usarDriverNativo,
     }).start();
-  }, [progresso, state.index]);
+  }, [progresso, indiceAtual]);
 
-  const indices = state.routes.map((_, indice) => indice);
-  const centros = state.routes.map((_, indice) =>
-    (indice + 0.5) * larguraBarra / state.routes.length - LARGURA_INDICADOR / 2,
+  const centros = ordemAbas.map((_, indice) =>
+    (indice + 0.5) * largura / ordemAbas.length - LARGURA_INDICADOR / 2,
   );
 
-  // O mural esconde a barra durante o fullscreen via navigation.setOptions.
-  // Evita que o indicador ou o wrapper apareçam nesse modo.
-  const rotaAtiva = state.routes[state.index];
-  const estiloBarraAtiva = StyleSheet.flatten(props.descriptors[rotaAtiva.key]?.options.tabBarStyle);
-  if (estiloBarraAtiva?.display === 'none') {
-    return <BottomTabBar {...props} />;
-  }
-
   return (
-    <DirecaoTransicao.Provider value={ultimaDirecao.current}>
-      <View
-        style={styles.barraContainer}
-        onLayout={evento => setLarguraBarra(evento.nativeEvent.layout.width)}
-      >
-        <BottomTabBar {...props} />
-        {larguraBarra > 0 && state.routes.length > 1 && (
-          <Animated.View
-            pointerEvents="none"
-            accessibilityElementsHidden
-            importantForAccessibility="no-hide-descendants"
-            style={[
-              styles.indicadorAtivo,
-              {
-                bottom: props.insets.bottom + 2,
-                transform: [{
-                  translateX: progresso.interpolate({
-                    inputRange: indices,
-                    outputRange: centros,
-                    extrapolate: 'clamp',
-                  }),
-                }],
-              },
-            ]}
-          />
-        )}
-      </View>
-    </DirecaoTransicao.Provider>
+    <View
+      pointerEvents="none"
+      style={StyleSheet.absoluteFill}
+      onLayout={evento => {
+        const proximaLargura = evento.nativeEvent.layout.width;
+        if (Math.abs(proximaLargura - largura) > 1) setLargura(proximaLargura);
+      }}
+    >
+      {largura > 0 && (
+        <Animated.View
+          style={[
+            styles.indicadorAtivo,
+            {
+              bottom: bottom + 2,
+              transform: [{
+                translateX: progresso.interpolate({
+                  inputRange: [0, 1, 2],
+                  outputRange: centros,
+                  extrapolate: 'clamp',
+                }),
+              }],
+            },
+          ]}
+        />
+      )}
+    </View>
   );
 }
 
 export default function TabLayout() {
   const { width: larguraTela } = useWindowDimensions();
+  const segmentos = useSegments();
+  const nomeAtual = segmentos[segmentos.length - 1] as NomeAba | undefined;
+  const posicao = ordemAbas.indexOf(nomeAtual as NomeAba);
+  const indiceAtual = posicao >= 0 ? posicao : 0;
+  const historico = useRef({ indice: indiceAtual, direcao: 0 });
+
+  if (indiceAtual !== historico.current.indice) {
+    historico.current.direcao = Math.sign(indiceAtual - historico.current.indice);
+    historico.current.indice = indiceAtual;
+  }
 
   return (
-    <Tabs
-      tabBar={props => <BarraAbasAnimada {...props} />}
-      screenOptions={{
-        tabBarActiveTintColor: VERDE,
-        tabBarInactiveTintColor: CINZA,
-        headerShown: false,
-        tabBarStyle: { backgroundColor: BEGE },
-        // Deslizamento de carrossel: abas à direita vêm da direita; ao voltar, da esquerda.
-        transitionSpec: {
-          animation: 'timing',
-          config: { duration: DURACAO_TRANSICAO, easing: suavizacao },
-        },
-        sceneStyleInterpolator: ({ current }) => ({
-          sceneStyle: {
-            transform: [{
-              translateX: current.progress.interpolate({
-                inputRange: [-1, 0, 1],
-                outputRange: [-larguraTela, 0, larguraTela],
-              }),
-            }],
+    <DirecaoTransicao.Provider value={historico.current.direcao}>
+      <Tabs
+        screenOptions={{
+          tabBarActiveTintColor: VERDE,
+          tabBarInactiveTintColor: CINZA,
+          headerShown: false,
+          tabBarStyle: { backgroundColor: BEGE },
+          tabBarBackground: () => <FundoBarraAnimado indiceAtual={indiceAtual} />,
+          // Transição carrossel: direção baseada na ordem das abas.
+          transitionSpec: {
+            animation: 'timing',
+            config: { duration: DURACAO_TRANSICAO, easing: suavizacao },
           },
-        }),
-      }}
-    >
-      <Tabs.Screen
-        name="agenda"
-        options={{
-          title: 'Agenda',
-          tabBarAccessibilityLabel: 'Agenda',
-          tabBarIcon: ({ color, focused }) =>
-            <IconeAba nome="calendar" cor={typeof color === 'string' ? color : CINZA} selecionado={focused} />,
+          sceneStyleInterpolator: ({ current }) => ({
+            sceneStyle: {
+              transform: [{
+                translateX: current.progress.interpolate({
+                  inputRange: [-1, 0, 1],
+                  outputRange: [-larguraTela, 0, larguraTela],
+                }),
+              }],
+            },
+          }),
         }}
-      />
-      <Tabs.Screen
-        name="explore"
-        options={{
-          title: 'Eventos',
-          tabBarAccessibilityLabel: 'Eventos',
-          tabBarIcon: ({ color, focused }) =>
-            <IconeAba nome="megaphone" cor={typeof color === 'string' ? color : CINZA} selecionado={focused} />,
-        }}
-      />
-      <Tabs.Screen
-        name="perfil"
-        options={{
-          title: 'Perfil',
-          tabBarAccessibilityLabel: 'Perfil',
-          tabBarIcon: ({ color, focused }) =>
-            <IconeAba nome="person" cor={typeof color === 'string' ? color : CINZA} selecionado={focused} />,
-        }}
-      />
-    </Tabs>
+      >
+        <Tabs.Screen
+          name="agenda"
+          options={{
+            title: 'Agenda',
+            tabBarAccessibilityLabel: 'Agenda',
+            tabBarIcon: ({ color, focused }) =>
+              <IconeAba nome="calendar" cor={typeof color === 'string' ? color : CINZA} selecionado={focused} />,
+          }}
+        />
+        <Tabs.Screen
+          name="explore"
+          options={{
+            title: 'Eventos',
+            tabBarAccessibilityLabel: 'Eventos',
+            tabBarIcon: ({ color, focused }) =>
+              <IconeAba nome="megaphone" cor={typeof color === 'string' ? color : CINZA} selecionado={focused} />,
+          }}
+        />
+        <Tabs.Screen
+          name="perfil"
+          options={{
+            title: 'Perfil',
+            tabBarAccessibilityLabel: 'Perfil',
+            tabBarIcon: ({ color, focused }) =>
+              <IconeAba nome="person" cor={typeof color === 'string' ? color : CINZA} selecionado={focused} />,
+          }}
+        />
+      </Tabs>
+    </DirecaoTransicao.Provider>
   );
 }
 
 const styles = StyleSheet.create({
-  barraContainer: { backgroundColor: BEGE },
   indicadorAtivo: {
     position: 'absolute',
     left: 0,
