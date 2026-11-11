@@ -123,7 +123,7 @@ export function AppDialogProvider({ children }: { children: React.ReactNode }) {
               showsVerticalScrollIndicator
             >
               {dialog?.message ? (
-                <Text style={{ fontSize: 15, lineHeight: 23, color: cores.text }}>
+                <Text style={{ fontSize: 15, lineHeight: 23, color: cores.texto }}>
                   {dialog.message}
                 </Text>
               ) : null}
@@ -146,17 +146,17 @@ export function AppDialogProvider({ children }: { children: React.ReactNode }) {
                   <Text style={{ fontSize: 14, fontWeight: '800', color: cores.principal }}>
                     {i + 1}. {item.titulo}
                   </Text>
-                  <Text style={{ color: cores.text, fontSize: 13 }}>
+                  <Text style={{ color: cores.texto, fontSize: 13 }}>
                     {periodo(item)}
                   </Text>
                   <Text style={{ color: cores.perigo, fontSize: 13, fontWeight: '700' }}>
                     Conflita com: {item.evento_conflitante}
                   </Text>
-                  <Text style={{ color: cores.text, fontSize: 13 }}>
+                  <Text style={{ color: cores.texto, fontSize: 13 }}>
                     {periodo(item, 'evento_conflitante_')}
                   </Text>
                   {item.congregacao ? (
-                    <Text style={{ color: cores.text, fontSize: 13 }}>
+                    <Text style={{ color: cores.texto, fontSize: 13 }}>
                       Congregação: {item.congregacao}
                     </Text>
                   ) : null}
