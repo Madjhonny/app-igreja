@@ -23,7 +23,7 @@ O Agenda ADP organiza **eventos únicos**, com duração de um ou mais dias, e o
 | Entrega | Critério de aceite | Estado |
 | --- | --- | --- |
 | Diálogos consistentes | Substituir pop-ups do navegador e alertas nativos por componentes internos em todas as telas | Implementada nesta branch; homologação pendente |
-| Exclusão de comentários | Autor exclui seu comentário; ADMIN e MASTER excluem qualquer comentário; pendente não exclui | Planejada |
+| Exclusão de comentários | Autor exclui seu comentário; ADMIN e MASTER excluem qualquer comentário; pendente não exclui | Implementada no PR #6; homologação Web/Android pendente |
 | Recuperação e alteração de senha | Usuários recuperam acesso por fluxo seguro, sem intervenção manual | Planejada |
 | Filtros e busca da agenda | Pesquisar título e filtrar congregação | Planejada |
 | Otimização e armazenamento de imagens | Reduzir payload do mural e preservar desempenho | Planejada |
@@ -65,3 +65,19 @@ O Agenda ADP organiza **eventos únicos**, com duração de um ou mais dias, e o
 - Etapa 3: `fix/dialogos-web-e-conflitos-11` (depende da etapa 2).
 
 Não realizar merge diretamente na `main` antes de fechar a homologação dos P0.
+
+## Homologação — comentários do mural (P1)
+
+1. **MEMBRO aprovado**: publicar um comentário próprio, excluir e verificar remoção imediata; o botão não deve aparecer nos comentários dos outros membros.
+2. **ADMIN**: excluir um comentário de teste de outra congregação, confirmando que o servidor autoriza moderação global.
+3. **MASTER**: excluir um comentário de teste de qualquer publicação.
+4. **Convidado pendente**: visualizar comentários, sem acesso ao botão excluir.
+5. **Cancelar**: tocar em excluir e cancelar; o comentário deve permanecer.
+6. **Resposta encadeada**: excluir um comentário que contém respostas; a árvore descendente deve desaparecer e o banco deve removê-la por cascata.
+7. **Falha de API**: interromper temporariamente a API local e excluir um comentário; a UI deve restaurá-lo e exibir erro.
+8. **Interfaces**: validar feed normal e modo tela cheia no navegador e no Android, sem modal sobreposto nem recarregamento global.
+
+### Branch de comentários
+
+- Etapa 4: `feat/exclusao-comentarios-mural-11` (PR #6, baseado na etapa 3).
+
