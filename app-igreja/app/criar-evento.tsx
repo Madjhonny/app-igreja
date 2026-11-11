@@ -1,7 +1,7 @@
 import { useSessionUser } from '@/hooks/use-session-user';
 import { apiFetch, authenticatedFetch, refreshSession } from '@/services/session';
 import React, { useCallback, useEffect, useState } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal, Platform } from 'react-native';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -95,7 +95,7 @@ export default function TelaCriarEvento() {
     return `${dia}/${mes}/${ano}`;
   };
 
-  const criarEvento = async () => {
+  const criarEvento = async (confirmarConflito = false) => {
     if (!titulo || !dataInicio || !horario) {
       Alert.alert('Atenção', 'Preencha o Título, o Período e o Horário de Início.');
       return;
@@ -117,7 +117,8 @@ export default function TelaCriarEvento() {
           legenda, 
           data_inicio: dataInicio,
           data_fim: dataFim || dataInicio,
-          horario
+          horario,
+          confirmar_conflito: confirmarConflito,
         })
       });
 
@@ -127,6 +128,19 @@ export default function TelaCriarEvento() {
         Alert.alert('Sucesso', 'Evento criado com sucesso!', [
           { text: 'OK', onPress: () => router.back() }
         ]);
+      } else if (resposta.status === 409 && dados.codigo === 'CONFLITO_AGENDA' && dados.podeConfirmar) {
+        const encontrados = (dados.eventosConflitantes || []).slice(0, 3)
+          .map((ev: any) => '• ' + ev.titulo).join('\n');
+        const aviso = 'Há eventos da mesma congregação neste horário:\n' + encontrados +
+          '\n\nDeseja criar o evento mesmo assim?';
+        if (Platform.OS === 'web') {
+          if (window.confirm(aviso)) void criarEvento(true);
+        } else {
+          Alert.alert('Conflito de agenda', aviso, [
+            { text: 'Voltar e revisar', style: 'cancel' },
+            { text: 'Criar mesmo assim', onPress: () => void criarEvento(true) },
+          ]);
+        }
       } else {
         Alert.alert('Erro', dados.erro || 'Falha ao criar evento.');
       }
@@ -205,7 +219,7 @@ export default function TelaCriarEvento() {
           numberOfLines={4} 
         />
 
-        <TouchableOpacity style={[styles.postButton, carregando && styles.buttonDisabled]} onPress={criarEvento} disabled={carregando}>
+        <TouchableOpacity style={[styles.postButton, carregando && styles.buttonDisabled]} onPress={() => void criarEvento()} disabled={carregando}>
           {carregando ? <ActivityIndicator color="#F7F5EC" /> : <Text style={styles.postButtonText}>CRIAR EVENTO</Text>}
         </TouchableOpacity>
 
