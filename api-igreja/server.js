@@ -89,7 +89,7 @@ async function enviarCodigoRecuperacao(email, codigo) {
       from: process.env.EMAIL_FROM,
       to: [email],
       subject: 'Agenda ADP - código para redefinir sua senha',
-      text: `Seu código para redefinir a senha do Agenda ADP é: ${codigo}\\n\\nO código expira em 15 minutos e só pode ser usado uma vez. Se você não solicitou, ignore esta mensagem.\\n\\nNão compartilhe esse código.`,
+      text: `Seu código para redefinir a senha do Agenda ADP é: ${codigo}\n\nO código expira em 15 minutos e só pode ser usado uma vez. Se você não solicitou, ignore esta mensagem.\n\nNão compartilhe esse código.`,
     }),
     signal: AbortSignal.timeout(10000),
   });
