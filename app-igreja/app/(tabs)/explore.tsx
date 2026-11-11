@@ -1,4 +1,4 @@
-import { useAppAlert } from '@/components/app-dialog';
+import { useAppDialog } from '@/components/app-dialog';
 import { authenticatedFetch, canInteract, canManage, refreshSession } from '@/services/session';
 import { useSessionUser } from '@/hooks/use-session-user';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -45,7 +45,7 @@ const ImagemFeed = React.memo(function ImagemFeed({ postId, uri }: { postId: num
 });
 
 export default function TelaEventos() {
-  const Alert = useAppAlert();
+  const { alert: mostrarDialogo } = useAppDialog();
   const [posts, setPosts] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -166,7 +166,7 @@ export default function TelaEventos() {
       if (!resposta.ok) throw new Error('LIKE_FAILED');
     } catch {
       setPostsCurtidas(prev => ({ ...prev, [postId]: anterior }));
-      Alert.alert('Não foi possível curtir', 'Tente novamente em alguns instantes.');
+      mostrarDialogo('Não foi possível curtir', 'Tente novamente em alguns instantes.');
     }
   };
 
@@ -189,7 +189,7 @@ export default function TelaEventos() {
       if (!resposta.ok) throw new Error('LIKE_FAILED');
     } catch {
       setComentariosCurtidas(prev => ({ ...prev, [comentarioId]: anterior }));
-      Alert.alert('Não foi possível curtir', 'Tente novamente em alguns instantes.');
+      mostrarDialogo('Não foi possível curtir', 'Tente novamente em alguns instantes.');
     }
   };
 
@@ -213,10 +213,10 @@ export default function TelaEventos() {
         setComentariosCurtidas(mapC);
       } else {
         const dados = await resp.json().catch(() => ({}));
-        Alert.alert('Erro', dados.erro || 'Não foi possível carregar os comentários.');
+        mostrarDialogo('Erro', dados.erro || 'Não foi possível carregar os comentários.');
       }
     } catch {
-      Alert.alert('Erro', 'Falha de conexão ao carregar os comentários.');
+      mostrarDialogo('Erro', 'Falha de conexão ao carregar os comentários.');
     }
   };
 
@@ -239,15 +239,15 @@ export default function TelaEventos() {
         await carregarComentarios(postSelecionadoId);
       } else {
         const dados = await resp.json().catch(() => ({}));
-        Alert.alert('Erro', dados.erro || 'Não foi possível enviar o comentário.');
+        mostrarDialogo('Erro', dados.erro || 'Não foi possível enviar o comentário.');
       }
     } catch {
-      Alert.alert("Erro", "Não foi possível enviar o comentário.");
+      mostrarDialogo("Erro", "Não foi possível enviar o comentário.");
     }
   };
 
   const excluirPost = async (postId: number) => {
-    Alert.alert("Excluir Publicação", "Tem certeza que deseja excluir este post?", [
+    mostrarDialogo("Excluir Publicação", "Tem certeza que deseja excluir este post?", [
       { text: "Cancelar", style: "cancel" },
       {
         text: "Excluir",
@@ -259,10 +259,10 @@ export default function TelaEventos() {
               setPosts(posts.filter(p => p.id !== postId));
               if (posts.length <= 1) setModoFullscreen(false);
             } else {
-              Alert.alert("Erro", "Você não tem permissão para excluir este post.");
+              mostrarDialogo("Erro", "Você não tem permissão para excluir este post.");
             }
           } catch {
-            Alert.alert("Erro", "Falha na conexão.");
+            mostrarDialogo("Erro", "Falha na conexão.");
           }
         }
       }
