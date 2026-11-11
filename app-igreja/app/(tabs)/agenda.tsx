@@ -1,7 +1,8 @@
 import { authenticatedFetch, canManage, getStoredUser } from '@/services/session';
 import { useSessionUser } from '@/hooks/use-session-user';
-import React, { useState, useCallback, useRef } from 'react';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, Modal, Alert, ActivityIndicator, Dimensions } from 'react-native';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, Modal, Alert, ActivityIndicator, Animated, Easing, Dimensions } from 'react-native';
+import type { GestureResponderEvent } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -21,6 +22,7 @@ const cores = {
 const ALTURA_LINHA = 42;
 const LINHAS_DA_GRADE = 6;
 const TAMANHO_MARCA = 36; // altura/diâmetro da marcação de eventos (limitada à largura da célula)
+const DESLOCAMENTOS_MESES = [-2, -1, 0, 1, 2] as const;
 
 type DiaDoMes = { dia: number; dataFormatada: string };
 
@@ -174,7 +176,7 @@ export default function TelaAgenda() {
     }, [anoAtual, buscarEventosDoMes, carregarUsuario, mesAtual])
   );
 
-  const mudarMes = (direcao: number) => {
+  const mudarMes = useCallback((direcao: number) => {
     let novoMes = mesAtual + direcao;
     let novoAno = anoAtual;
     if (novoMes > 11) {
@@ -186,10 +188,92 @@ export default function TelaAgenda() {
     }
     setMesAtual(novoMes);
     setAnoAtual(novoAno);
-  };
+  }, [anoAtual, mesAtual]);
 
   // A largura é medida em tempo de execução para manter a grade responsiva.
   const [larguraCalendario, setLarguraCalendario] = useState(() => Math.min(Dimensions.get('window').width - 40, 640) - 38);
+  const [rolagemHabilitada, setRolagemHabilitada] = useState(true);
+
+  const [trilhoX] = useState(() => new Animated.Value(0));
+  const indiceAtual = anoAtual * 12 + mesAtual;
+  const [indiceAncora] = useState(indiceAtual);
+
+  const posInicioRef = useRef(0);
+  const dxRef = useRef(0);
+  const lendoPosicaoRef = useRef(false);
+  const toqueInicioRef = useRef({ x: 0, y: 0, instante: 0 });
+
+  const animarPara = useCallback((valor: number, duracao: number) => {
+    Animated.timing(trilhoX, {
+      toValue: valor,
+      duration: duracao,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [trilhoX]);
+
+  // Setas e gesto usam o mesmo estado; o trilho apenas acompanha o mês selecionado.
+  useEffect(() => {
+    animarPara(-(indiceAtual - indiceAncora) * larguraCalendario, 260);
+  }, [animarPara, indiceAncora, indiceAtual, larguraCalendario]);
+
+  useEffect(() => () => trilhoX.stopAnimation(), [trilhoX]);
+
+  const finalizarGesto = useCallback((velocidadeX: number) => {
+    setRolagemHabilitada(true);
+    const baseAtual = -(indiceAtual - indiceAncora) * larguraCalendario;
+    const deslocamento = posInicioRef.current + dxRef.current - baseAtual;
+    const limite = larguraCalendario * 0.2;
+    const gestoRapido = Math.abs(velocidadeX) > 0.3;
+
+    let direcao = 0;
+    if (deslocamento < -limite || (gestoRapido && velocidadeX < 0 && deslocamento < 0)) direcao = 1;
+    else if (deslocamento > limite || (gestoRapido && velocidadeX > 0 && deslocamento > 0)) direcao = -1;
+
+    if (direcao !== 0) {
+      mudarMes(direcao);
+    } else {
+      animarPara(baseAtual, 200);
+    }
+  }, [animarPara, indiceAncora, indiceAtual, larguraCalendario, mudarMes]);
+
+  const registrarInicioDoToque = useCallback((evento: GestureResponderEvent) => {
+    toqueInicioRef.current = {
+      x: evento.nativeEvent.pageX,
+      y: evento.nativeEvent.pageY,
+      instante: evento.nativeEvent.timestamp,
+    };
+    return false;
+  }, []);
+
+  const deveCapturarGestoHorizontal = useCallback((evento: GestureResponderEvent) => {
+    const deslocamentoX = evento.nativeEvent.pageX - toqueInicioRef.current.x;
+    const deslocamentoY = evento.nativeEvent.pageY - toqueInicioRef.current.y;
+    return Math.abs(deslocamentoX) > 8 && Math.abs(deslocamentoX) > Math.abs(deslocamentoY) * 1.5;
+  }, []);
+
+  const iniciarGestoHorizontal = useCallback((evento: GestureResponderEvent) => {
+    setRolagemHabilitada(false);
+    const deslocamentoInicial = evento.nativeEvent.pageX - toqueInicioRef.current.x;
+    dxRef.current = Math.max(-larguraCalendario, Math.min(larguraCalendario, deslocamentoInicial));
+    lendoPosicaoRef.current = true;
+    trilhoX.stopAnimation((valor) => {
+      posInicioRef.current = valor;
+      lendoPosicaoRef.current = false;
+      trilhoX.setValue(valor + dxRef.current);
+    });
+  }, [larguraCalendario, trilhoX]);
+
+  const moverGestoHorizontal = useCallback((evento: GestureResponderEvent) => {
+    const deslocamentoX = evento.nativeEvent.pageX - toqueInicioRef.current.x;
+    dxRef.current = Math.max(-larguraCalendario, Math.min(larguraCalendario, deslocamentoX));
+    if (!lendoPosicaoRef.current) trilhoX.setValue(posInicioRef.current + dxRef.current);
+  }, [larguraCalendario, trilhoX]);
+
+  const concluirGestoHorizontal = useCallback((evento: GestureResponderEvent) => {
+    const duracao = Math.max(1, evento.nativeEvent.timestamp - toqueInicioRef.current.instante);
+    finalizarGesto(dxRef.current / duracao);
+  }, [finalizarGesto]);
 
   const formatarDataExibicao = (dataStr: string) => {
     if (!dataStr) return '';
@@ -245,11 +329,21 @@ export default function TelaAgenda() {
         <ScrollView
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
+          scrollEnabled={rolagemHabilitada}
         >
           <View style={styles.conteudo}>
         
             {/* CALENDÁRIO ESTÁVEL E SINCRONIZADO */}
-            <View style={styles.calendarCard}>
+            <View
+              style={styles.calendarCard}
+              onStartShouldSetResponderCapture={registrarInicioDoToque}
+              onMoveShouldSetResponderCapture={deveCapturarGestoHorizontal}
+              onResponderGrant={iniciarGestoHorizontal}
+              onResponderMove={moverGestoHorizontal}
+              onResponderRelease={concluirGestoHorizontal}
+              onResponderTerminate={() => finalizarGesto(0)}
+              onResponderTerminationRequest={() => false}
+            >
               <View style={styles.monthNavigator}>
                 <TouchableOpacity accessibilityLabel="Mês anterior" onPress={() => mudarMes(-1)} style={styles.arrowButton} activeOpacity={0.7}>
                   <Ionicons name="chevron-back" size={20} color={cores.verde} />
@@ -273,9 +367,21 @@ export default function TelaAgenda() {
                   if (Math.abs(l - larguraCalendario) > 0.5) setLarguraCalendario(l);
                 }}
               >
-                <View style={[styles.trilho, { width: larguraCalendario }]}>
-                  <PaginaMes ano={anoAtual} mes={mesAtual} eventos={eventosDoMes} largura={larguraCalendario} esquerda={0} />
-                </View>
+                <Animated.View style={[styles.trilho, { width: larguraCalendario, transform: [{ translateX: trilhoX }] }]}>
+                  {DESLOCAMENTOS_MESES.map((deslocamento) => {
+                    const indice = indiceAtual + deslocamento;
+                    return (
+                      <PaginaMes
+                        key={indice}
+                        ano={Math.floor(indice / 12)}
+                        mes={indice % 12}
+                        eventos={eventosDoMes}
+                        largura={larguraCalendario}
+                        esquerda={(indice - indiceAncora) * larguraCalendario}
+                      />
+                    );
+                  })}
+                </Animated.View>
               </View>
             </View>
 

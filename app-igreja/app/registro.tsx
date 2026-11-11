@@ -306,13 +306,14 @@ export default function TelaRegistro() {
 
       <KeyboardAvoidingView 
         style={styles.painel} 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       >
         <ScrollView 
           style={styles.formContainer}
-          contentContainerStyle={styles.scrollContent} // <--- Espaço vazio garantido no final
+          contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="always" // Mantém os campos tocáveis mesmo com o teclado aberto
+          keyboardShouldPersistTaps="handled"
         >
           <View style={styles.formInner}>
             <View style={styles.fotoContainer}>
@@ -388,7 +389,8 @@ export default function TelaRegistro() {
             {erroEmail ? <Text style={styles.errorText}>{erroEmail}</Text> : null}
 
             <Text style={styles.label}>Senha</Text>
-            <View style={[styles.passwordContainer, ...estadosVisuais('senha', senha, erroSenha)]}>
+            {/* Mantém a hierarquia nativa estável quando o foco adiciona sombra no Fabric/Android. */}
+            <View collapsable={false} style={[styles.passwordContainer, ...estadosVisuais('senha', senha, erroSenha)]}>
               <TextInput 
                 ref={senhaRef}
                 style={styles.passwordInput} 
@@ -423,7 +425,7 @@ export default function TelaRegistro() {
             </View>
 
             <Text style={styles.label}>Confirmar Senha</Text>
-            <View style={[styles.passwordContainer, ...estadosVisuais('confirmarSenha', confirmarSenha, erroSenha)]}>
+            <View collapsable={false} style={[styles.passwordContainer, ...estadosVisuais('confirmarSenha', confirmarSenha, erroSenha)]}>
               <TextInput 
                 ref={confirmarSenhaRef}
                 style={styles.passwordInput} 
