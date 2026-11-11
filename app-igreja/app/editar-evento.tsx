@@ -1,6 +1,7 @@
+import { useAppAlert } from '@/components/app-dialog';
 import { apiFetch, authenticatedFetch } from '@/services/session';
 import React, { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal, FlatList, Platform } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, FlatList, Platform } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
@@ -23,6 +24,7 @@ function formatarDataBanco(data: Date) {
 }
 
 export default function TelaEditarEvento() {
+  const Alert = useAppAlert();
   // Recebe os dados que vieram da tela de Agenda
   const params = useLocalSearchParams(); 
   
