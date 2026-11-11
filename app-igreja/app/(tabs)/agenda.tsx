@@ -491,7 +491,7 @@ export default function TelaAgenda() {
                 </View>
                 <Text style={styles.modalEventTitle}>Excluir evento?</Text>
                 <Text style={styles.confirmacaoMensagem}>
-                  Tem certeza que deseja excluir "{eventoSelecionado?.titulo}" da agenda?
+                  Tem certeza que deseja excluir o evento {eventoSelecionado?.titulo} da agenda?
                 </Text>
                 {erroExclusao ? (
                   <Text accessibilityRole="alert" style={styles.confirmacaoErro}>{erroExclusao}</Text>
