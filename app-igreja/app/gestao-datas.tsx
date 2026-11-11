@@ -580,7 +580,7 @@ export default function TelaGestaoDatas() {
             { label: 'Eventos para revisar', value: resumo.revisar || 0 },
             { label: 'Marcados como conflito', value: resumo.marcadosConflito || 0 },
           ],
-          conflicts,
+          conflicts: conflitos,
           buttons: [
             { text: 'Voltar e revisar', style: 'cancel' },
             { text: 'Publicar mesmo assim', style: 'destructive',
