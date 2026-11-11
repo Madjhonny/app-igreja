@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const crypto = require('node:crypto');
 
 const master = { id: 1, nivel_acesso: 'MASTER', status_conta: 'APROVADO', congregacao_id: null };
 const admin = { id: 1, nivel_acesso: 'ADMIN', status_conta: 'APROVADO', congregacao_id: 10 };
@@ -83,7 +84,7 @@ function setup({ user = master, drafts = [], existing = [], failInsert = false }
     pg: { Pool: function () { return pool; } },
     'express-rate-limit': { rateLimit: () => (_req, _res, next) => next() },
     bcryptjs: { compare: async () => true, genSalt: async () => '', hash: async () => '' },
-    dotenv: { config() {} },
+    'node:crypto': crypto, dotenv: { config() {} },
     jsonwebtoken: { verify: () => ({ id: 1 }), sign: () => 'token' },
   };
   const source = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8')
@@ -95,6 +96,7 @@ function setup({ user = master, drafts = [], existing = [], failInsert = false }
     },
     process: { env: { JWT_SECRET: 'test-only' } },
     console: { error() {} },
+    Buffer,
   });
 
   return {
