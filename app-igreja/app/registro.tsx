@@ -1,6 +1,7 @@
 import { apiFetch, saveSession } from '@/services/session';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal, FlatList, Image, KeyboardAvoidingView, Platform } from 'react-native';
+import type { TextInputInstance } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -40,6 +41,8 @@ export default function TelaRegistro() {
   const [erroAcessoConvidado, setErroAcessoConvidado] = useState('');
   const [mostrarSenha, setMostrarSenha] = useState(false);
   const [mostrarConfirmarSenha, setMostrarConfirmarSenha] = useState(false);
+  const senhaRef = useRef<TextInputInstance>(null);
+  const confirmarSenhaRef = useRef<TextInputInstance>(null);
 
   // === ESTADOS DE ERRO ===
   const [erroEmail, setErroEmail] = useState('');
@@ -49,7 +52,7 @@ export default function TelaRegistro() {
   const [campoFocado, setCampoFocado] = useState<string | null>(null);
   const foco = (campo: string) => ({
     onFocus: () => setCampoFocado(campo),
-    onBlur: () => setCampoFocado(null),
+    onBlur: () => setCampoFocado((campoAtual) => campoAtual === campo ? null : campoAtual),
   });
   const estadosVisuais = (campo: string, valor: string, erro: string) => [
     valor.length > 0 && styles.inputPreenchido,
@@ -309,7 +312,7 @@ export default function TelaRegistro() {
           style={styles.formContainer}
           contentContainerStyle={styles.scrollContent} // <--- Espaço vazio garantido no final
           showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled" // <--- Permite clicar mesmo com o teclado aberto
+          keyboardShouldPersistTaps="always" // Mantém os campos tocáveis mesmo com o teclado aberto
         >
           <View style={styles.formInner}>
             <View style={styles.fotoContainer}>
@@ -331,6 +334,8 @@ export default function TelaRegistro() {
               placeholder="Ex: João da Silva"
               placeholderTextColor={cores.verdeSutil}
               selectionColor={cores.verde}
+              autoComplete={Platform.OS === 'android' ? 'off' : undefined}
+              importantForAutofill={Platform.OS === 'android' ? 'no' : undefined}
               value={nome}
               onChangeText={setNome}
               {...foco('nome')}
@@ -343,6 +348,8 @@ export default function TelaRegistro() {
               placeholderTextColor={cores.verdeSutil}
               selectionColor={cores.verde}
               keyboardType="numeric"
+              autoComplete={Platform.OS === 'android' ? 'off' : undefined}
+              importantForAutofill={Platform.OS === 'android' ? 'no' : undefined}
               value={cpf}
               onChangeText={aplicarMascaraCPF}
               maxLength={14}
@@ -356,6 +363,8 @@ export default function TelaRegistro() {
               placeholderTextColor={cores.verdeSutil}
               selectionColor={cores.verde}
               keyboardType="phone-pad"
+              autoComplete={Platform.OS === 'android' ? 'off' : undefined}
+              importantForAutofill={Platform.OS === 'android' ? 'no' : undefined}
               value={telefone}
               onChangeText={aplicarMascaraTelefone}
               maxLength={15}
@@ -370,6 +379,8 @@ export default function TelaRegistro() {
               selectionColor={cores.verde}
               keyboardType="email-address" 
               autoCapitalize="none" 
+              autoComplete={Platform.OS === 'android' ? 'off' : undefined}
+              importantForAutofill={Platform.OS === 'android' ? 'no' : undefined}
               value={email} 
               onChangeText={validarEmail} 
               {...foco('email')}
@@ -379,6 +390,7 @@ export default function TelaRegistro() {
             <Text style={styles.label}>Senha</Text>
             <View style={[styles.passwordContainer, ...estadosVisuais('senha', senha, erroSenha)]}>
               <TextInput 
+                ref={senhaRef}
                 style={styles.passwordInput} 
                 placeholder="Crie uma senha forte" 
                 placeholderTextColor={cores.verdeSutil}
@@ -386,13 +398,26 @@ export default function TelaRegistro() {
                 secureTextEntry={!mostrarSenha} 
                 autoCapitalize="none"
                 autoCorrect={false}
-                autoComplete="new-password"
+                autoComplete={Platform.OS === 'android' ? 'off' : 'new-password'}
+                importantForAutofill={Platform.OS === 'android' ? 'no' : undefined}
+                returnKeyType="next"
+                submitBehavior="submit"
                 accessibilityLabel="Senha"
                 value={senha} 
                 onChangeText={(texto) => validarSenha(texto, confirmarSenha)} 
+                onPressIn={() => senhaRef.current?.focus()}
+                onSubmitEditing={() => confirmarSenhaRef.current?.focus()}
                 {...foco('senha')}
               />
-              <TouchableOpacity onPress={() => setMostrarSenha(atual => !atual)} style={styles.eyeIcon} accessibilityRole="button" accessibilityLabel={mostrarSenha ? 'Ocultar senha' : 'Mostrar senha'}>
+              <TouchableOpacity
+                onPress={() => {
+                  setMostrarSenha(atual => !atual);
+                  requestAnimationFrame(() => senhaRef.current?.focus());
+                }}
+                style={styles.eyeIcon}
+                accessibilityRole="button"
+                accessibilityLabel={mostrarSenha ? 'Ocultar senha' : 'Mostrar senha'}
+              >
                 <Ionicons name={mostrarSenha ? "eye-off" : "eye"} size={22} color={cores.verdeTexto} />
               </TouchableOpacity>
             </View>
@@ -400,6 +425,7 @@ export default function TelaRegistro() {
             <Text style={styles.label}>Confirmar Senha</Text>
             <View style={[styles.passwordContainer, ...estadosVisuais('confirmarSenha', confirmarSenha, erroSenha)]}>
               <TextInput 
+                ref={confirmarSenhaRef}
                 style={styles.passwordInput} 
                 placeholder="Repita sua senha" 
                 placeholderTextColor={cores.verdeSutil}
@@ -407,13 +433,24 @@ export default function TelaRegistro() {
                 secureTextEntry={!mostrarConfirmarSenha} 
                 autoCapitalize="none"
                 autoCorrect={false}
-                autoComplete="new-password"
+                autoComplete={Platform.OS === 'android' ? 'off' : 'new-password'}
+                importantForAutofill={Platform.OS === 'android' ? 'no' : undefined}
+                returnKeyType="done"
                 accessibilityLabel="Confirmar senha"
                 value={confirmarSenha} 
                 onChangeText={validarConfirmacaoSenha} 
+                onPressIn={() => confirmarSenhaRef.current?.focus()}
                 {...foco('confirmarSenha')}
               />
-              <TouchableOpacity onPress={() => setMostrarConfirmarSenha(atual => !atual)} style={styles.eyeIcon} accessibilityRole="button" accessibilityLabel={mostrarConfirmarSenha ? 'Ocultar confirmação de senha' : 'Mostrar confirmação de senha'}>
+              <TouchableOpacity
+                onPress={() => {
+                  setMostrarConfirmarSenha(atual => !atual);
+                  requestAnimationFrame(() => confirmarSenhaRef.current?.focus());
+                }}
+                style={styles.eyeIcon}
+                accessibilityRole="button"
+                accessibilityLabel={mostrarConfirmarSenha ? 'Ocultar confirmação de senha' : 'Mostrar confirmação de senha'}
+              >
                 <Ionicons name={mostrarConfirmarSenha ? "eye-off" : "eye"} size={22} color={cores.verdeTexto} />
               </TouchableOpacity>
             </View>
@@ -516,10 +553,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: cores.neutro,
     borderRadius: 14,
-    paddingLeft: 16,
-    paddingRight: 8,
+    paddingRight: 4,
   },
-  passwordInput: { flex: 1, minWidth: 0, height: 54, paddingHorizontal: 0, paddingVertical: 0, fontSize: 16, color: cores.verde },
+  passwordInput: { flex: 1, minWidth: 0, height: 54, paddingLeft: 16, paddingRight: 8, paddingVertical: 0, fontSize: 16, color: cores.verde },
   eyeIcon: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
 
   // Estados visuais dos campos (a ordem no array garante a prioridade: erro > foco > preenchido)
