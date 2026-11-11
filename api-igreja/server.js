@@ -3,6 +3,7 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('node:crypto');
 const { rateLimit } = require('express-rate-limit');
 require('dotenv').config();
 
@@ -47,6 +48,54 @@ const cadastroLimiter = rateLimit({
 });
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CODIGO_RE = /^\\d{8}$/;
+const senhaSegura = senha => typeof senha === 'string' &&
+  senha.length >= 10 && senha.length <= 128 &&
+  /[A-Z]/.test(senha) && /[a-z]/.test(senha) && /\\d/.test(senha);
+const hashCodigoSenha = (id, codigo) =>
+  crypto.createHmac('sha256', JWT_SECRET).update(`${id}:${codigo}`).digest('hex');
+const codigoCorreto = (hashEsperado, hashInformado) => {
+  if (typeof hashEsperado !== 'string' || !/^[a-f0-9]{64}$/.test(hashEsperado)) return false;
+  return crypto.timingSafeEqual(Buffer.from(hashEsperado, 'hex'), Buffer.from(hashInformado, 'hex'));
+};
+const solicitarSenhaLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: Number(process.env.RESET_REQUEST_RATE_LIMIT || 5),
+  standardHeaders: 'draft-8', legacyHeaders: false,
+  message: { erro: 'Muitas solicitações. Tente novamente mais tarde.' },
+});
+const redefinirSenhaLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: Number(process.env.RESET_VERIFY_RATE_LIMIT || 10),
+  standardHeaders: 'draft-8', legacyHeaders: false,
+  message: { erro: 'Muitas tentativas. Aguarde alguns minutos.' },
+});
+const alterarSenhaLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 8, standardHeaders: 'draft-8', legacyHeaders: false,
+  message: { erro: 'Muitas tentativas de alteração. Aguarde alguns minutos.' },
+});
+const RESPOSTA_RECUPERACAO = 'Se o e-mail estiver cadastrado e apto a acessar o aplicativo, enviaremos um código de recuperação.';
+
+async function enviarCodigoRecuperacao(email, codigo) {
+  const resposta = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+      'User-Agent': 'agenda-adp/1.1',
+    },
+    body: JSON.stringify({
+      from: process.env.EMAIL_FROM,
+      to: [email],
+      subject: 'Agenda ADP - código para redefinir sua senha',
+      text: `Seu código para redefinir a senha do Agenda ADP é: ${codigo}\\n\\nO código expira em 15 minutos e só pode ser usado uma vez. Se você não solicitou, ignore esta mensagem.\\n\\nNão compartilhe esse código.`,
+    }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!resposta.ok) throw new Error('Provedor de e-mail não aceitou a solicitação.');
+}
+
 const DATA_RE = /^\d{4}-\d{2}-\d{2}$/;
 const HORA_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const IMAGE_RE = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
@@ -149,6 +198,133 @@ const pool = new Pool({
     : undefined,
 });
 
+// === SENHAS: solicitação, redefinição e alteração autenticada ===
+
+// Resposta genérica para não revelar se determinado e-mail existe.
+app.post('/senha/solicitar-recuperacao', solicitarSenhaLimiter, async (req, res) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  if (!EMAIL_RE.test(email) || email.length > 254) {
+    return res.status(400).json({ erro: 'Informe um e-mail válido.' });
+  }
+  if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) {
+    return res.status(503).json({ erro: 'Recuperação de senha temporariamente indisponível.' });
+  }
+  try {
+    const resultado = await pool.query(
+      "SELECT id FROM usuarios WHERE LOWER(email) = $1 AND status_conta IN ('APROVADO','PENDENTE')",
+      [email]
+    );
+    const usuario = resultado.rows[0];
+    if (usuario) {
+      const codigo = crypto.randomInt(0, 100000000).toString().padStart(8, '0');
+      const hash = hashCodigoSenha(usuario.id, codigo);
+      // Cooldown persistente por usuário: 1 envio a cada 2 minutos, inclusive entre instâncias.
+      const guardado = await pool.query(`
+        INSERT INTO senha_recuperacoes (usuario_id, codigo_hash, expira_em, enviado_em, tentativas)
+        VALUES ($1, $2, NOW() + INTERVAL '15 minutes', NOW(), 0)
+        ON CONFLICT (usuario_id) DO UPDATE
+          SET codigo_hash = EXCLUDED.codigo_hash, expira_em = EXCLUDED.expira_em,
+              enviado_em = EXCLUDED.enviado_em, tentativas = 0
+          WHERE senha_recuperacoes.enviado_em < NOW() - INTERVAL '2 minutes'
+        RETURNING usuario_id
+      `, [usuario.id, hash]);
+      if (guardado.rowCount) {
+        try {
+          await enviarCodigoRecuperacao(email, codigo);
+        } catch (erroEmail) {
+          // Um envio com falha não deve prender a conta no cooldown.
+          await pool.query('DELETE FROM senha_recuperacoes WHERE usuario_id = $1 AND codigo_hash = $2', [usuario.id, hash]);
+          console.error('Falha no envio do código de recuperação:', erroEmail.message);
+        }
+      }
+    }
+    return res.status(202).json({ mensagem: RESPOSTA_RECUPERACAO });
+  } catch (erro) {
+    console.error('Erro ao solicitar recuperação:', erro);
+    return res.status(500).json({ erro: 'Não foi possível processar a solicitação.' });
+  }
+});
+
+app.post('/senha/redefinir', redefinirSenhaLimiter, async (req, res) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const { codigo, nova_senha } = req.body || {};
+  if (!EMAIL_RE.test(email) || email.length > 254 || typeof codigo !== 'string' ||
+      !CODIGO_RE.test(codigo) || !senhaSegura(nova_senha)) {
+    return res.status(400).json({ erro: 'Informe e-mail, código de 8 dígitos e nova senha com 10 caracteres, maiúscula, minúscula e número.' });
+  }
+  const erroCodigo = { erro: 'Código inválido ou expirado. Solicite outro código, se necessário.' };
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const resultado = await client.query(`
+      SELECT r.usuario_id, r.codigo_hash, r.expira_em, r.tentativas
+      FROM senha_recuperacoes r
+      JOIN usuarios u ON u.id = r.usuario_id
+      WHERE LOWER(u.email) = $1 AND u.status_conta IN ('APROVADO','PENDENTE')
+      FOR UPDATE OF r
+    `, [email]);
+    const recuperacao = resultado.rows[0];
+    if (!recuperacao) {
+      await client.query('ROLLBACK');
+      return res.status(400).json(erroCodigo);
+    }
+    if (Number(recuperacao.tentativas) >= 5 || new Date(recuperacao.expira_em).getTime() <= Date.now()) {
+      await client.query('DELETE FROM senha_recuperacoes WHERE usuario_id = $1', [recuperacao.usuario_id]);
+      await client.query('COMMIT');
+      return res.status(400).json(erroCodigo);
+    }
+    const hashInformado = hashCodigoSenha(recuperacao.usuario_id, codigo);
+    if (!codigoCorreto(recuperacao.codigo_hash, hashInformado)) {
+      await client.query('UPDATE senha_recuperacoes SET tentativas = tentativas + 1 WHERE usuario_id = $1', [recuperacao.usuario_id]);
+      await client.query('COMMIT');
+      return res.status(400).json(erroCodigo);
+    }
+
+    const novoHash = await bcrypt.hash(nova_senha, 12);
+    await client.query('UPDATE usuarios SET senha_hash = $1, token_version = token_version + 1 WHERE id = $2',
+      [novoHash, recuperacao.usuario_id]);
+    await client.query('DELETE FROM senha_recuperacoes WHERE usuario_id = $1', [recuperacao.usuario_id]);
+    await client.query('COMMIT');
+    return res.json({ mensagem: 'Senha redefinida. Entre novamente com a nova senha.' });
+  } catch (erro) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    console.error('Erro ao redefinir senha:', erro);
+    return res.status(500).json({ erro: 'Não foi possível redefinir a senha.' });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+app.post('/senha/alterar', verificarToken, alterarSenhaLimiter, async (req, res) => {
+  const { senha_atual, nova_senha } = req.body || {};
+  if (typeof senha_atual !== 'string' || !senha_atual || senha_atual.length > 128 || !senhaSegura(nova_senha)) {
+    return res.status(400).json({ erro: 'Informe a senha atual e uma nova senha com ao menos 10 caracteres, maiúscula, minúscula e número.' });
+  }
+  if (senha_atual === nova_senha) return res.status(400).json({ erro: 'A nova senha deve ser diferente da atual.' });
+
+  try {
+    const resultado = await pool.query('SELECT senha_hash FROM usuarios WHERE id = $1', [req.usuario.id]);
+    if (!resultado.rowCount || !await bcrypt.compare(senha_atual, resultado.rows[0].senha_hash)) {
+      return res.status(403).json({ erro: 'A senha atual está incorreta.' });
+    }
+    const novoHash = await bcrypt.hash(nova_senha, 12);
+    // Impede sobrescrever uma troca concorrente e revoga as sessões anteriores.
+    const atualizado = await pool.query(`
+      UPDATE usuarios SET senha_hash = $1, token_version = token_version + 1
+      WHERE id = $2 AND senha_hash = $3 RETURNING id
+    `, [novoHash, req.usuario.id, resultado.rows[0].senha_hash]);
+    if (!atualizado.rowCount) {
+      return res.status(409).json({ erro: 'A senha foi alterada em outra sessão. Entre novamente.' });
+    }
+    await pool.query('DELETE FROM senha_recuperacoes WHERE usuario_id = $1', [req.usuario.id]);
+    return res.json({ mensagem: 'Senha alterada. Entre novamente em todos os dispositivos.' });
+  } catch (erro) {
+    console.error('Erro ao alterar senha:', erro);
+    return res.status(500).json({ erro: 'Não foi possível alterar a senha.' });
+  }
+});
+
 // === ROTA DE CADASTRO DE USUÁRIO ===
 app.post('/cadastro', cadastroLimiter, async (req, res) => {
   try {
@@ -237,7 +413,8 @@ app.post('/login', loginLimiter, async (req, res) => {
         id: usuario.id, 
         nivel_acesso: usuario.nivel_acesso, 
         status_conta: usuario.status_conta,
-        congregacao_id: usuario.congregacao_id 
+        congregacao_id: usuario.congregacao_id,
+        token_version: Number(usuario.token_version || 0),
       }, 
       JWT_SECRET, 
       { expiresIn: '7d' }
@@ -285,11 +462,14 @@ const verificarToken = async (req, res, next) => {
   try {
     // Permissões atuais: revogações não dependem da expiração do token.
     const resultado = await pool.query(
-      'SELECT id, nivel_acesso, status_conta, congregacao_id FROM usuarios WHERE id = $1',
+      'SELECT id, nivel_acesso, status_conta, congregacao_id, token_version FROM usuarios WHERE id = $1',
       [decodificado.id]
     );
     const usuario = resultado.rows[0];
     if (!usuario) return res.status(401).json({ erro: 'Sessão inválida. Faça login novamente.' });
+    if (Number(usuario.token_version || 0) !== Number(decodificado.token_version || 0)) {
+      return res.status(401).json({ erro: 'Sua senha foi alterada. Entre novamente.' });
+    }
     if (!['MASTER', 'ADMIN', 'MEMBRO'].includes(usuario.nivel_acesso) ||
         !['APROVADO', 'PENDENTE'].includes(usuario.status_conta)) {
       return res.status(403).json({ codigo: 'CONTA_SEM_ACESSO', erro: 'Sua conta não tem acesso. Procure a administração.' });
