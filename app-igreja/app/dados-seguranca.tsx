@@ -64,12 +64,31 @@ export default function TelaDadosSeguranca() {
             <Text style={styles.value}>{usuario?.nivel_acesso || 'Membro'}</Text>
           </View>
         </View>
+
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel="Alterar senha"
+          style={styles.securityButton}
+          onPress={() => router.push('/alterar-senha')}
+        >
+          <Ionicons name="lock-closed-outline" size={21} color="#2A4B4C" />
+          <View style={{ flex: 1 }}>
+            <Text style={styles.securityTitle}>Alterar senha</Text>
+            <Text style={styles.securityDescription}>Atualize sua senha com segurança.</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={20} color="#2A4B4C" />
+        </TouchableOpacity>
       </View>
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  securityButton: { marginTop: 20, backgroundColor: '#E2EAE9', padding: 17, borderRadius: 12,
+    flexDirection: 'row', alignItems: 'center', gap: 14 },
+  securityTitle: { fontSize: 15, fontWeight: '700', color: '#2A4B4C' },
+  securityDescription: { fontSize: 12, color: '#526767', marginTop: 3 },
+
   container: { flex: 1, backgroundColor: '#F7F5EC' },
   header: { backgroundColor: '#2A4B4C', paddingTop: 50, paddingBottom: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingHorizontal: 20 },
   backButton: { padding: 5 },
