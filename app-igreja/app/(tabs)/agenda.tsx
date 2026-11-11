@@ -770,7 +770,7 @@ const styles = StyleSheet.create({
   filtroModalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   filtroModalTitulo: { flex: 1, fontSize: 18, fontWeight: '700', color: cores.verde },
   filtroModalDescricao: { fontSize: 13, lineHeight: 19, color: cores.verdeTexto, marginTop: 8, marginBottom: 10 },
-  filtroModalLista: { flexGrow: 0 },
+  filtroModalLista: { maxHeight: 320, flexShrink: 1 },
   filtroOpcao: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13,
     paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: cores.suave },
   filtroOpcaoTexto: { flex: 1, fontSize: 15, color: cores.verde, fontWeight: '500' },
