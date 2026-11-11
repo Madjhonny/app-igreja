@@ -1,11 +1,13 @@
+import { useAppAlert } from '@/components/app-dialog';
 import { authenticatedFetch } from '@/services/session';
 import React, { useState } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Image, KeyboardAvoidingView, Platform, Modal } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Image, KeyboardAvoidingView, Platform, Modal } from 'react-native';
 import { router, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 
 export default function TelaCriarPost() {
+  const Alert = useAppAlert();
   const [titulo, setTitulo] = useState('');
   const [descricao, setDescricao] = useState('');
   const [local, setLocal] = useState('');
