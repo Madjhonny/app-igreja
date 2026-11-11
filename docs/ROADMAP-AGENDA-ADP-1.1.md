@@ -25,7 +25,7 @@ O Agenda ADP organiza **eventos únicos**, com duração de um ou mais dias, e o
 | Diálogos consistentes | Substituir pop-ups do navegador e alertas nativos por componentes internos em todas as telas | Implementada nesta branch; homologação pendente |
 | Exclusão de comentários | Autor exclui seu comentário; ADMIN e MASTER excluem qualquer comentário; pendente não exclui | Implementada no PR #6; homologação Web/Android pendente |
 | Recuperação e alteração de senha | Código por e-mail de uso único, revogação de sessões e senha atual obrigatória | Implementada no PR #7; migração e homologação pendentes |
-| Filtros e busca da agenda | Pesquisar título e filtrar congregação | Planejada |
+| Filtro por congregação na agenda | Selecionar uma congregação ou todas; filtrar atividades e marcações do calendário, preservando navegação de meses | Implementada no PR #8; homologação Web/Android pendente |
 | Otimização e armazenamento de imagens | Reduzir payload do mural e preservar desempenho | Planejada |
 | Refatoração modular | Separar responsabilidades de telas extensas e rotas da API sem mudar comportamento | Planejada |
 
@@ -96,3 +96,27 @@ Não realizar merge diretamente na `main` antes de fechar a homologação dos P0
 10. Verificar que login, cadastro, agenda e mural não sofreram regressões.
 
 - Etapa 5: `feat/recuperacao-alteracao-senha-11` (PR #7, baseada na etapa 4).
+
+## Homologação — filtro por congregação da Agenda (P1)
+
+1. Abrir a Agenda com o filtro inicial **Todas as congregações**; verificar que a lista e as marcações do calendário não mudam.
+2. Escolher uma congregação com eventos; conferir que apenas eventos dessa congregação aparecem, tanto na lista quanto nos dias destacados.
+3. Selecionar congregação sem eventos no mês; conferir a mensagem específica e ausência de marcações indevidas.
+4. Navegar entre meses, inclusive entre dezembro e janeiro; o filtro deve permanecer selecionado sem travar o gesto de deslizar o calendário.
+5. Usar **Mostrar todas as congregações**; restaurar todos os eventos e as marcações.
+6. Abrir e fechar a seleção sem alterar o filtro; verificar ausência de modais sobrepostos com os detalhes dos eventos.
+7. Após criar, editar ou excluir um evento, voltar à Agenda e conferir a lista filtrada e o calendário atualizados.
+8. Conferir comportamento com diferentes perfis de usuário (MEMBRO, ADMIN, MASTER) e em telas Web e Android.
+9. Desligar temporariamente a API, abrir o seletor e conferir que a mensagem de erro permite **Tentar novamente** sem fechar a tela.
+10. Confirmar que **não há pesquisa por título**, conforme escopo final escolhido.
+
+- Etapa 6: `feat/filtro-congregacao-agenda-11` (PR #8, baseada no PR #7).
+- O filtro é local aos eventos já carregados para o mês; não exige migração ou alteração nas rotas da API.
+
+## Homologação — senhas (registro de resultados)
+
+- Alteração de senha: usuário confirmou testes na Web e no Android.
+- Recuperação por e-mail: usuário confirmou recebimento e redefinição bem-sucedidos no ambiente de homologação.
+- Código inválido, reutilizado, expirado e senha anterior: os quatro cenários foram testados e aprovados pelo usuário.
+- **Publicação em produção pendente**: remetente `onboarding@resend.dev` é exclusivo de testes; é necessário domínio de envio verificado antes de liberar recuperação para todos os usuários.
+- Não houve migração em produção; `003_password_recovery.sql` foi aplicada somente na branch Neon `homologacao-senhas-1-1`.
