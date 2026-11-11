@@ -25,7 +25,9 @@ O Agenda ADP organiza **eventos únicos**, com duração de um ou mais dias, e o
 | Diálogos consistentes | Substituir pop-ups do navegador e alertas nativos por componentes internos em todas as telas | Implementada nesta branch; homologação pendente |
 | Exclusão de comentários | Autor exclui seu comentário; ADMIN e MASTER excluem qualquer comentário; pendente não exclui | Implementada no PR #6; homologação Web/Android pendente |
 | Recuperação e alteração de senha | Código por e-mail de uso único, revogação de sessões e senha atual obrigatória | Implementada no PR #7; migração e homologação pendentes |
-| Filtro por congregação na agenda | Selecionar uma congregação ou todas; filtrar atividades e marcações do calendário, preservando navegação de meses | Implementada no PR #8; homologação Web/Android pendente |
+| Filtro por congregação na agenda | Selecionar uma congregação ou todas; filtrar atividades e marcações do calendário, preservando navegação de meses | **Homologada pelo usuário na Web e Android** (PR #8) |
+| Padronização dos cabeçalhos | Aba Agenda com título `Agenda`; aba Eventos com título `Eventos`, ambos centralizados, sem ocultar ação de nova postagem | Em implementação no PR #9 |
+| Transições entre as abas principais | Agenda ↔ Eventos ↔ Perfil com deslizamento horizontal bidirecional, barra inferior com indicador e ícones animados em sincronia, preservando navegação e estilos | Em implementação no PR #9 |
 | Otimização e armazenamento de imagens | Reduzir payload do mural e preservar desempenho | Planejada |
 | Refatoração modular | Separar responsabilidades de telas extensas e rotas da API sem mudar comportamento | Planejada |
 
@@ -120,3 +122,23 @@ Não realizar merge diretamente na `main` antes de fechar a homologação dos P0
 - Código inválido, reutilizado, expirado e senha anterior: os quatro cenários foram testados e aprovados pelo usuário.
 - **Publicação em produção pendente**: remetente `onboarding@resend.dev` é exclusivo de testes; é necessário domínio de envio verificado antes de liberar recuperação para todos os usuários.
 - Não houve migração em produção; `003_password_recovery.sql` foi aplicada somente na branch Neon `homologacao-senhas-1-1`.
+
+## Homologação — cabeçalhos e transições entre abas (P1)
+
+- Escopo visual: nenhuma mudança de regras, autenticação, API, banco, layout interno de telas ou ordem das abas.
+- Cabeçalho da Agenda: **Agenda**, centralizado.
+- Cabeçalho de Eventos: **Eventos**, centralizado independentemente da presença do botão de criar postagem (MASTER/ADMIN).
+- Transição das telas: entrar em aba à direita faz a página atual deslizar à esquerda e a próxima vir da direita; navegar no sentido contrário inverte os movimentos.
+- Rodapé: preservar cores e desenhos dos três ícones, com ícone selecionado verde-escuro; animar o pequeno deslocamento do ícone ativo e o indicador horizontal entre as posições.
+- **Sincronização:** usar o mesmo tempo e curva de suavização para as cenas e o rodapé; evitar piscar e renderizar desnecessariamente.
+- **Agenda → Eventos → Perfil → Eventos → Agenda:** testar sequência completa em Web e Android, inclusive pulando diretamente de Agenda para Perfil e voltando.
+- Verificar que o gesto horizontal do calendário da Agenda continua navegando **meses**, não abas.
+- Confirmar que o mural mantém seu fullscreen e a barra inferior oculta durante o fullscreen.
+- Testar abertura/fechamento de modal, voltar a telas internas, criação e exclusão, mudança de conta e rotação de tela sem falhas.
+- Em dispositivos lentos e com opções de movimento reduzido, avaliar conforto e responsividade.
+- **Homologação pendente:** CI e testes manuais na Web/Android antes de merge/deploy.
+
+### Branch de cabeçalhos e transições
+
+- Etapa 7: `feat/transicoes-abas-headers-11` (PR #9, baseada no PR #8).
+- Não realizar merge nem deploy em produção sem homologação do usuário.
