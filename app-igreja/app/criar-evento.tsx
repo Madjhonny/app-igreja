@@ -142,7 +142,9 @@ export default function TelaCriarEvento() {
           ]);
         }
       } else {
-        Alert.alert('Erro', dados.erro || 'Falha ao criar evento.');
+        const avisoErro = dados.erro || 'Falha ao criar evento.';
+        if (Platform.OS === 'web') window.alert(avisoErro);
+        else Alert.alert('Erro', avisoErro);
       }
     } catch {
       Alert.alert('Erro', 'Não foi possível conectar ao servidor.');
