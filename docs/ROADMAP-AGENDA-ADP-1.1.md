@@ -24,7 +24,7 @@ O Agenda ADP organiza **eventos únicos**, com duração de um ou mais dias, e o
 | --- | --- | --- |
 | Diálogos consistentes | Substituir pop-ups do navegador e alertas nativos por componentes internos em todas as telas | Implementada nesta branch; homologação pendente |
 | Exclusão de comentários | Autor exclui seu comentário; ADMIN e MASTER excluem qualquer comentário; pendente não exclui | Implementada no PR #6; homologação Web/Android pendente |
-| Recuperação e alteração de senha | Usuários recuperam acesso por fluxo seguro, sem intervenção manual | Planejada |
+| Recuperação e alteração de senha | Código por e-mail de uso único, revogação de sessões e senha atual obrigatória | Implementada no PR #7; migração e homologação pendentes |
 | Filtros e busca da agenda | Pesquisar título e filtrar congregação | Planejada |
 | Otimização e armazenamento de imagens | Reduzir payload do mural e preservar desempenho | Planejada |
 | Refatoração modular | Separar responsabilidades de telas extensas e rotas da API sem mudar comportamento | Planejada |
@@ -81,3 +81,18 @@ Não realizar merge diretamente na `main` antes de fechar a homologação dos P0
 
 - Etapa 4: `feat/exclusao-comentarios-mural-11` (PR #6, baseado na etapa 3).
 
+
+## Homologação — Segurança das senhas (P1)
+
+1. Aplicar `003_password_recovery.sql` **somente em banco verificado**, após backup. O PR não executa migração automaticamente.
+2. Em Dados e Segurança, alterar senha informando a senha atual correta, confirmar que todas as sessões são revogadas e que a nova senha permite login.
+3. Tentar senha atual incorreta e senha fraca: o servidor deve rejeitar sem modificar a conta.
+4. Configurar `RESEND_API_KEY` e `EMAIL_FROM` no backend, sem divulgar essas credenciais.
+5. No login, solicitar código usando e-mail cadastrado; verificar recebimento no endereço correto.
+6. Testar código errado, expirado, repetido e múltiplas tentativas. Nenhum deles pode redefinir a senha.
+7. Com código válido, redefinir a senha, confirmar invalidação das sessões e fazer novo login.
+8. Testar um e-mail inexistente: a resposta deve ser indistinguível da solicitação existente.
+9. Homologar telas na Web e Android, inclusive estado de conexão ruim e indisponibilidade do provedor.
+10. Verificar que login, cadastro, agenda e mural não sofreram regressões.
+
+- Etapa 5: `feat/recuperacao-alteracao-senha-11` (PR #7, baseada na etapa 4).
