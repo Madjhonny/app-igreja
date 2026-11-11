@@ -1,11 +1,13 @@
+import { useAppAlert } from '@/components/app-dialog';
 import { clearSession, canManage, getStoredUser } from '@/services/session';
 import { useSessionUser } from '@/hooks/use-session-user';
 import React, { useCallback } from 'react';
-import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, Alert, Platform } from 'react-native';
+import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, Platform } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function TelaPerfil() {
+  const Alert = useAppAlert();
   const [usuario, setUsuario] = useSessionUser();
 
   useFocusEffect(
