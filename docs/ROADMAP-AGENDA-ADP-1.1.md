@@ -26,8 +26,8 @@ O Agenda ADP organiza **eventos únicos**, com duração de um ou mais dias, e o
 | Exclusão de comentários | Autor exclui seu comentário; ADMIN e MASTER excluem qualquer comentário; pendente não exclui | Implementada no PR #6; homologação Web/Android pendente |
 | Recuperação e alteração de senha | Código por e-mail de uso único, revogação de sessões e senha atual obrigatória | Implementada no PR #7; migração e homologação pendentes |
 | Filtro por congregação na agenda | Selecionar uma congregação ou todas; filtrar atividades e marcações do calendário, preservando navegação de meses | **Homologada pelo usuário na Web e Android** (PR #8) |
-| Padronização dos cabeçalhos | Aba Agenda com título `Agenda`; aba Eventos com título `Eventos`, ambos centralizados, sem ocultar ação de nova postagem | Em implementação no PR #9 |
-| Transições entre as abas principais | Agenda ↔ Eventos ↔ Perfil com deslizamento horizontal bidirecional, barra inferior com indicador e ícones animados em sincronia, preservando navegação e estilos | Em implementação no PR #9 |
+| Padronização dos cabeçalhos | Aba Agenda com título `Agenda`; aba Eventos com título `Eventos`, ambos centralizados, sem ocultar ação de nova postagem | **Implementada no PR #9; funcionamento confirmado pelo usuário** |
+| Transições entre as abas principais | Agenda ↔ Eventos ↔ Perfil com deslizamento horizontal bidirecional, barra inferior com indicador e ícones animados em sincronia, preservando navegação e estilos | **Homologada pelo usuário na Web e no Android (PR #9)** |
 | Otimização e armazenamento de imagens | Reduzir payload do mural e preservar desempenho | Planejada |
 | Refatoração modular | Separar responsabilidades de telas extensas e rotas da API sem mudar comportamento | Planejada |
 
@@ -136,9 +136,19 @@ Não realizar merge diretamente na `main` antes de fechar a homologação dos P0
 - Confirmar que o mural mantém seu fullscreen e a barra inferior oculta durante o fullscreen.
 - Testar abertura/fechamento de modal, voltar a telas internas, criação e exclusão, mudança de conta e rotação de tela sem falhas.
 - Em dispositivos lentos e com opções de movimento reduzido, avaliar conforto e responsividade.
-- **Homologação pendente:** CI e testes manuais na Web/Android antes de merge/deploy.
+- **Homologação informada pelo usuário (11/11/2026):** transições e navegação funcionando na Web e no Android após correção da barra inferior. CI do commit `a6ac335` concluído com sucesso.
+- **Antes da produção:** manter verificações de regressão e fechamento das demais etapas dependentes; nenhuma publicação autorizada.
 
 ### Branch de cabeçalhos e transições
 
 - Etapa 7: `feat/transicoes-abas-headers-11` (PR #9, baseada no PR #8).
 - Não realizar merge nem deploy em produção sem homologação do usuário.
+
+## Próxima etapa planejada — desempenho e armazenamento de imagens do mural (P1)
+
+- Analisar como as fotos são recebidas, armazenadas e devolvidas na API, inclusive limites de tamanho e formato.
+- Evitar payloads grandes, sem quebrar publicações e imagens já existentes.
+- Definir tratamento consistente de imagens (compressão/redimensionamento e dimensões adequadas a Web/Android).
+- Avaliar armazenamento externo com acesso controlado e estratégia de migração, com custo e segurança adequados.
+- Medir impactos em carregamento, memória, transferência e responsividade antes/depois.
+- Trabalhar em branch e PR separados com CI e testes manuais, sem alterar Neon/Render de produção automaticamente.
