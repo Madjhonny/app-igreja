@@ -1,11 +1,13 @@
+import { useAppAlert } from '@/components/app-dialog';
 import { useSessionUser } from '@/hooks/use-session-user';
 import { apiFetch, authenticatedFetch, canManage, getSessionToken, getStoredUser } from '@/services/session';
 import React, { useState, useCallback } from 'react';
-import { StyleSheet, Text, View, FlatList, TouchableOpacity, ActivityIndicator, Alert, Modal, Image, ScrollView } from 'react-native';
+import { StyleSheet, Text, View, FlatList, TouchableOpacity, ActivityIndicator, Modal, Image, ScrollView } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function TelaUsuariosCongregacao() {
+  const Alert = useAppAlert();
   const { congregacaoNome } = useLocalSearchParams();
   const [usuarios, setUsuarios] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(false);
