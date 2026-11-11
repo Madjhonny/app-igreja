@@ -2,7 +2,7 @@ import { useAppAlert } from '@/components/app-dialog';
 import { clearSession, canManage, getStoredUser } from '@/services/session';
 import { useSessionUser } from '@/hooks/use-session-user';
 import React, { useCallback } from 'react';
-import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, Platform } from 'react-native';
+import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -25,10 +25,6 @@ export default function TelaPerfil() {
       await clearSession();
       router.replace('/login');
     };
-    if (Platform.OS === 'web') {
-      if (window.confirm('Tem certeza de que deseja desconectar?')) void sair();
-      return;
-    }
     Alert.alert('Sair da Conta', 'Tem certeza de que deseja desconectar?', [
       { text: 'Cancelar', style: 'cancel' },
       { text: 'Sair', style: 'destructive', onPress: sair },
