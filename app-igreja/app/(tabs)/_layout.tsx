@@ -21,7 +21,7 @@ const DirecaoTransicao = createContext(0);
 
 function IconeAba({ nome, cor, selecionado }: { nome: NomeIcone; cor: string; selecionado: boolean }) {
   const direcao = useContext(DirecaoTransicao);
-  const deslocamento = useRef(new Animated.Value(0)).current;
+  const [deslocamento] = useState(() => new Animated.Value(0));
   const selecionadoAnterior = useRef(selecionado);
 
   useEffect(() => {
@@ -51,7 +51,7 @@ function IconeAba({ nome, cor, selecionado }: { nome: NomeIcone; cor: string; se
 function FundoBarraAnimado({ indiceAtual }: { indiceAtual: number }) {
   const { bottom } = useSafeAreaInsets();
   const [largura, setLargura] = useState(0);
-  const progresso = useRef(new Animated.Value(indiceAtual)).current;
+  const [progresso] = useState(() => new Animated.Value(indiceAtual));
   const indiceAnteriorRef = useRef(indiceAtual);
 
   useEffect(() => {
@@ -106,15 +106,15 @@ export default function TabLayout() {
   const nomeAtual = segmentos[segmentos.length - 1] as NomeAba | undefined;
   const posicao = ordemAbas.indexOf(nomeAtual as NomeAba);
   const indiceAtual = posicao >= 0 ? posicao : 0;
-  const historico = useRef({ indice: indiceAtual, direcao: 0 });
-
-  if (indiceAtual !== historico.current.indice) {
-    historico.current.direcao = Math.sign(indiceAtual - historico.current.indice);
-    historico.current.indice = indiceAtual;
+  // Padrão de estado derivado: atualiza a direção antes de renderizar os ícones.
+  // Evita acessar refs durante o render (React Compiler / Expo lint).
+  const [transicao, setTransicao] = useState({ indice: indiceAtual, direcao: 0 });
+  if (transicao.indice !== indiceAtual) {
+    setTransicao({ indice: indiceAtual, direcao: Math.sign(indiceAtual - transicao.indice) });
   }
 
   return (
-    <DirecaoTransicao.Provider value={historico.current.direcao}>
+    <DirecaoTransicao.Provider value={transicao.direcao}>
       <Tabs
         screenOptions={{
           tabBarActiveTintColor: VERDE,
