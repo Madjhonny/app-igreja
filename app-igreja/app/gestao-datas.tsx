@@ -1,19 +1,9 @@
+import { useAppAlert, useAppDialog } from '@/components/app-dialog';
 import { API_URL, apiFetch, getSessionToken } from '@/services/session';
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
-  StyleSheet,
-  Text,
-  View,
-  ScrollView,
-  TouchableOpacity,
-  Modal,
-  TextInput,
-  Alert,
-  ActivityIndicator,
-  useWindowDimensions,
-  Platform
-} from 'react-native';
+  StyleSheet, Text, View, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, useWindowDimensions, Platform } from 'react-native';
 
 import { router, Stack, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -33,6 +23,8 @@ const ordenarEventos = (eventos: any[]) => [...eventos].sort((a, b) =>
 );
 
 export default function TelaGestaoDatas() {
+  const Alert = useAppAlert();
+  const { showDialog } = useAppDialog();
   const { width, height: windowHeight } = useWindowDimensions();
   const isDesktop = width >= 900;
 
