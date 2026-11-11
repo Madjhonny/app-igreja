@@ -1,11 +1,13 @@
+import { useAppAlert } from '@/components/app-dialog';
 import { useSessionUser } from '@/hooks/use-session-user';
 import { apiFetch, authenticatedFetch, refreshSession } from '@/services/session';
 import React, { useCallback, useEffect, useState } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal, Platform } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, Platform } from 'react-native';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function TelaCriarEvento() {
+  const Alert = useAppAlert();
   const params = useLocalSearchParams();
   const [usuario, setUsuario] = useSessionUser();
   const [congregacoes, setCongregacoes] = useState<any[]>([]);
