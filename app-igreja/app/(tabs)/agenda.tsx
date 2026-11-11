@@ -395,7 +395,7 @@ export default function TelaAgenda() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Agenda da Igreja</Text>
+        <Text style={styles.headerTitle}>Agenda</Text>
       </View>
 
       {avisoAgenda ? (
