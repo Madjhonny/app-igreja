@@ -76,6 +76,14 @@ function BarraAbasAnimada(props: BottomTabBarProps) {
     (indice + 0.5) * larguraBarra / state.routes.length - LARGURA_INDICADOR / 2,
   );
 
+  // O mural esconde a barra durante o fullscreen via navigation.setOptions.
+  // Evita que o indicador ou o wrapper apareçam nesse modo.
+  const rotaAtiva = state.routes[state.index];
+  const estiloBarraAtiva = StyleSheet.flatten(props.descriptors[rotaAtiva.key]?.options.tabBarStyle);
+  if (estiloBarraAtiva?.display === 'none') {
+    return <BottomTabBar {...props} />;
+  }
+
   return (
     <DirecaoTransicao.Provider value={ultimaDirecao.current}>
       <View
