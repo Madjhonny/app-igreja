@@ -81,6 +81,56 @@ const validarEvento = ({ titulo, data_inicio, data_fim, horario }) => {
   return null;
 };
 
+// Namespace para serializar alterações na agenda por congregação.
+// A publicação e as alterações diretas compartilham este lock transacional.
+const AGENDA_LOCK_NAMESPACE = 414441;
+
+const bloquearAgendaDaCongregacao = async (client, ids) => {
+  const ordenados = [...new Set(ids.map(Number))].sort((a, b) => a - b);
+  for (const id of ordenados) {
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)', [AGENDA_LOCK_NAMESPACE, id]);
+  }
+};
+
+const minutosDoHorario = (horario) => {
+  const [horas, minutos] = String(horario).slice(0, 5).split(':').map(Number);
+  return horas * 60 + minutos;
+};
+
+const eventosSobrepostos = (primeiro, segundo) =>
+  Number(primeiro.congregacao_id) === Number(segundo.congregacao_id) &&
+  String(primeiro.data_inicio).slice(0, 10) <= String(segundo.data_fim).slice(0, 10) &&
+  String(primeiro.data_fim).slice(0, 10) >= String(segundo.data_inicio).slice(0, 10) &&
+  minutosDoHorario(primeiro.horario) < minutosDoHorario(segundo.horario) + Number(segundo.duracao_minutos || 60) &&
+  minutosDoHorario(segundo.horario) < minutosDoHorario(primeiro.horario) + Number(primeiro.duracao_minutos || 60);
+
+// Consulta compartilhada por criação e edição direta de eventos.
+// Intervalos são semiabertos: terminar às 20h não conflita com começar às 20h.
+const consultarConflitosPublicados = async (client, evento, ignorarId = null) => {
+  const resultado = await client.query(`
+    SELECT id, titulo, data_inicio::text AS data_inicio, data_fim::text AS data_fim,
+           horario::text AS horario, COALESCE(duracao_minutos, 60) AS duracao_minutos,
+           congregacao_id
+    FROM eventos
+    WHERE congregacao_id = $1
+      AND data_inicio <= $3::date AND data_fim >= $2::date
+      AND ($6::integer IS NULL OR id <> $6)
+      AND EXTRACT(EPOCH FROM horario::time) < EXTRACT(EPOCH FROM $4::time) + $5 * 60
+      AND EXTRACT(EPOCH FROM horario::time) + COALESCE(duracao_minutos, 60) * 60 > EXTRACT(EPOCH FROM $4::time)
+    ORDER BY data_inicio, horario, id
+    LIMIT 8;
+  `, [evento.congregacao_id, evento.data_inicio, evento.data_fim,
+      evento.horario, Number(evento.duracao_minutos || 60), ignorarId]);
+  return resultado.rows;
+};
+
+const respostaConflitoDireto = (conflitos) => ({
+  codigo: 'CONFLITO_AGENDA',
+  erro: 'Já existe um evento da mesma congregação nesse período e horário.',
+  eventosConflitantes: conflitos,
+  podeConfirmar: true,
+});
+
 // === CONFIGURAÇÃO DO BANCO DE DADOS ===
 const pool = new Pool({
   user: process.env.DB_USER,
@@ -987,8 +1037,8 @@ app.post('/gestao-datas', verificarToken, somenteMaster, async (req, res) => {
           AND data_inicio <= $3
           AND data_fim >= $2
       ) AS eventos_conflitantes
-      WHERE (horario, horario + duracao_minutos * INTERVAL '1 minute')
-        OVERLAPS ($4::time, $4::time + $5 * INTERVAL '1 minute')
+      WHERE EXTRACT(EPOCH FROM horario::time) < EXTRACT(EPOCH FROM $4::time) + $5 * 60
+        AND EXTRACT(EPOCH FROM horario::time) + duracao_minutos * 60 > EXTRACT(EPOCH FROM $4::time)
       LIMIT 5;
     `, [congregacao_id, data_inicio, data_fim, horario, duracao]);
 
@@ -1093,20 +1143,101 @@ app.delete('/gestao-datas/:id', verificarToken, somenteMaster, async (req, res) 
 });
 
 app.post('/gestao-datas/publicar', verificarToken, somenteMaster, async (req, res) => {
-  const client = await pool.connect();
+  let client;
+  let transacaoAberta = false;
   try {
+    client = await pool.connect();
     await client.query('BEGIN');
-    const master_id = req.usuario.id;
+    transacaoAberta = true;
 
-    const rascunhosRes = await client.query(` SELECT * FROM gestao_datas_rascunho WHERE master_id = $1 AND publicado = FALSE ORDER BY id FOR UPDATE; `, 
-      [master_id]);
+    const master_id = req.usuario.id;
+    const confirmarConflitos = req.body?.confirmar_conflitos === true;
+
+    // Bloqueia os rascunhos até o fim da publicação para impedir duplicação.
+    const rascunhosRes = await client.query(`
+      SELECT id, titulo, data_inicio::text AS data_inicio, data_fim::text AS data_fim,
+             horario::text AS horario, duracao_minutos, congregacao_id, legenda, marcador
+      FROM gestao_datas_rascunho
+      WHERE master_id = $1 AND publicado = FALSE
+      ORDER BY id FOR UPDATE;
+    `, [master_id]);
 
     if (rascunhosRes.rowCount === 0) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ erro: "Não há eventos pendentes para publicar." });
+      transacaoAberta = false;
+      return res.status(400).json({ erro: 'Não há eventos pendentes para publicar.' });
     }
 
-    for (const rascunho of rascunhosRes.rows) {
+    const rascunhos = rascunhosRes.rows;
+    await bloquearAgendaDaCongregacao(client, rascunhos.map(r => r.congregacao_id));
+
+    const inicio = rascunhos.reduce((min, r) => r.data_inicio < min ? r.data_inicio : min, rascunhos[0].data_inicio);
+    const fim = rascunhos.reduce((max, r) => r.data_fim > max ? r.data_fim : max, rascunhos[0].data_fim);
+    const congregacoes = [...new Set(rascunhos.map(r => Number(r.congregacao_id)))];
+    const publicadosRes = await client.query(`
+      SELECT id, titulo, data_inicio::text AS data_inicio, data_fim::text AS data_fim,
+             horario::text AS horario, COALESCE(duracao_minutos, 60) AS duracao_minutos,
+             congregacao_id
+      FROM eventos
+      WHERE congregacao_id = ANY($1::integer[])
+        AND data_inicio <= $3::date AND data_fim >= $2::date;
+    `, [congregacoes, inicio, fim]);
+
+    const conflitos = [];
+    const idsComConflitos = new Set();
+
+    for (const rascunho of rascunhos) {
+      for (const publicado of publicadosRes.rows) {
+        if (!eventosSobrepostos(rascunho, publicado)) continue;
+        idsComConflitos.add(rascunho.id);
+        conflitos.push({
+          rascunho_id: rascunho.id,
+          titulo: rascunho.titulo,
+          evento_conflitante: publicado.titulo,
+          origem: 'AGENDA PUBLICADA',
+        });
+      }
+    }
+
+    // Também valida eventos dentro do mesmo lote, antes de inserir qualquer registro.
+    for (let i = 0; i < rascunhos.length; i++) {
+      for (let j = i + 1; j < rascunhos.length; j++) {
+        const a = rascunhos[i];
+        const b = rascunhos[j];
+        if (!eventosSobrepostos(a, b)) continue;
+        idsComConflitos.add(a.id);
+        idsComConflitos.add(b.id);
+        conflitos.push({
+          rascunho_id: a.id,
+          titulo: a.titulo,
+          evento_conflitante: b.titulo,
+          origem: 'PLANEJAMENTO',
+        });
+      }
+    }
+
+    const revisar = rascunhos.filter(r => r.marcador === 'REVISAR').length;
+    const marcadosConflito = rascunhos.filter(r => r.marcador === 'CONFLITO').length;
+    const resumo = {
+      revisar,
+      marcadosConflito,
+      eventosEmConflito: idsComConflitos.size,
+      sobreposicoesEncontradas: conflitos.length,
+    };
+
+    // Marcadores são avisos manuais; conflito real é sempre recalculado no servidor.
+    if ((revisar > 0 || marcadosConflito > 0 || conflitos.length > 0) && !confirmarConflitos) {
+      await client.query('ROLLBACK');
+      transacaoAberta = false;
+      return res.status(409).json({
+        codigo: 'CONFIRMACAO_CONFLITOS_NECESSARIA',
+        erro: 'Há eventos com conflito ou pendentes de revisão. O MASTER deve confirmar a publicação.',
+        resumo,
+        conflitos: conflitos.slice(0, 8),
+      });
+    }
+
+    for (const rascunho of rascunhos) {
       await client.query(`
         INSERT INTO eventos (titulo, data_inicio, data_fim, horario, duracao_minutos, congregacao_id, criado_por_usuario_id, legenda)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
@@ -1118,23 +1249,32 @@ app.post('/gestao-datas/publicar', verificarToken, somenteMaster, async (req, re
         rascunho.duracao_minutos || 60,
         rascunho.congregacao_id,
         master_id,
-        rascunho.legenda
+        rascunho.legenda,
       ]);
     }
 
     await client.query(
-      'UPDATE gestao_datas_rascunho SET publicado = TRUE WHERE master_id = $1 AND publicado = FALSE', 
+      'UPDATE gestao_datas_rascunho SET publicado = TRUE WHERE master_id = $1 AND publicado = FALSE',
       [master_id]
     );
 
     await client.query('COMMIT');
-    res.json({ mensagem: "Todos os eventos foram publicados com sucesso na Agenda geral!" });
+    transacaoAberta = false;
+    res.json({
+      mensagem: 'Todos os eventos foram publicados com sucesso na Agenda geral!',
+      quantidadePublicada: rascunhos.length,
+      confirmacaoExcepcional: confirmarConflitos,
+    });
   } catch (erro) {
-    await client.query('ROLLBACK');
-    console.error("Erro na publicação em lote:", erro);
-    res.status(500).json({ erro: "Erro ao publicar eventos na Agenda." });
+    if (transacaoAberta && client) {
+      try { await client.query('ROLLBACK'); } catch (rollbackErro) {
+        console.error('Erro ao desfazer publicação:', rollbackErro);
+      }
+    }
+    console.error('Erro na publicação em lote:', erro);
+    res.status(500).json({ erro: 'Erro ao publicar eventos na Agenda.' });
   } finally {
-    client.release();
+    client?.release();
   }
 });
 
