@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
+const crypto = require('node:crypto');
 const path = require('node:path');
 
 function setup(
@@ -53,10 +54,10 @@ function setup(
   } };
   const mocks = { express, cors: () => () => {}, pg: { Pool: function () { return pool; } },
     'express-rate-limit': { rateLimit: () => (_req, _res, next) => next() },
-    bcryptjs: { compare: async () => true, genSalt: async () => 'salt', hash: async () => 'hash' }, dotenv: { config() {} },
+    bcryptjs: { compare: async () => true, genSalt: async () => 'salt', hash: async () => 'hash' }, 'node:crypto': crypto, dotenv: { config() {} },
     jsonwebtoken: { verify(token) { if (token === 'bad') throw new Error('Invalid'); return { id: 1, nivel_acesso: 'MASTER', status_conta: 'APROVADO' }; }, sign: () => 'token' } };
   const source = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8').replace(/iniciarServidor\(\);\s*$/, '');
-  vm.runInNewContext(source, { require: name => { if (!(name in mocks)) throw new Error(name); return mocks[name]; }, process: { env: { JWT_SECRET: 'test-only' } }, console: { error() {} } });
+  vm.runInNewContext(source, { require: name => { if (!(name in mocks)) throw new Error(name); return mocks[name]; }, process: { env: { JWT_SECRET: 'test-only' } }, console: { error() {} }, Buffer });
   return { queries, failDB() { dbError = true; }, setUser(nextUser) { currentUser = nextUser; }, async call(method, url, body = {}, header = 'Bearer valid', paramId = '2') {
     const req = { headers: { authorization: header }, body, params: { id: paramId }, query: {} };
     const res = { code: 200, headers: {}, set(k,v) { this.headers[k] = v; return this; }, status(c) { this.code = c; return this; }, json(data) { this.data = data; return this; } };
