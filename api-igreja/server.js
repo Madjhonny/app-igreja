@@ -392,6 +392,8 @@ app.get('/eventos', verificarToken, async (req, res) => {
 });
 
 app.post('/eventos', verificarToken, somenteGestores, async (req, res) => {
+  let client;
+  let transacaoAberta = false;
   try {
     const { titulo, data_inicio, data_fim, horario, congregacao_id, legenda } = req.body;
     const { id: usuario_id, nivel_acesso, congregacao_id: congregacaoAdmin } = req.usuario;
@@ -402,29 +404,64 @@ app.post('/eventos', verificarToken, somenteGestores, async (req, res) => {
       return res.status(400).json({ erro: 'A legenda deve ter no máximo 2000 caracteres.' });
     }
 
-    let congregacaoFinal = congregacao_id;
-    if (nivel_acesso === 'ADMIN') {
-      congregacaoFinal = congregacaoAdmin;
-    } else if (nivel_acesso === 'MASTER' && !idValido(congregacaoFinal)) {
-      return res.status(400).json({ erro: "O Master deve selecionar uma congregação para o evento." });
+    const duracao = Number(req.body.duracao_minutos ?? 60);
+    if (!Number.isInteger(duracao) || duracao < 15 || duracao > 1440) {
+      return res.status(400).json({ erro: 'A duração deve estar entre 15 e 1440 minutos.' });
     }
 
-    const query = `
-      INSERT INTO eventos (titulo, data_inicio, data_fim, horario, congregacao_id, criado_por_usuario_id, legenda)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING *;
-    `;
-    const valores = [titulo.trim(), data_inicio, data_fim, horario.slice(0, 5), Number(congregacaoFinal), usuario_id, legenda?.trim() || null];
-    const resultado = await pool.query(query, valores);
+    const congregacaoFinal = nivel_acesso === 'ADMIN' ? congregacaoAdmin : congregacao_id;
+    if (!idValido(congregacaoFinal)) {
+      return res.status(400).json({ erro: 'Selecione uma congregação válida.' });
+    }
 
-    res.status(201).json({ mensagem: "Evento criado com sucesso!", evento: resultado.rows[0] });
+    const eventoNovo = {
+      titulo: titulo.trim(), data_inicio, data_fim, horario: horario.slice(0, 5),
+      duracao_minutos: duracao, congregacao_id: Number(congregacaoFinal),
+    };
+
+    client = await pool.connect();
+    await client.query('BEGIN');
+    transacaoAberta = true;
+    await bloquearAgendaDaCongregacao(client, [congregacaoFinal]);
+
+    const conflitos = await consultarConflitosPublicados(client, eventoNovo);
+    if (conflitos.length > 0 && !(nivel_acesso === 'MASTER' && req.body.confirmar_conflito === true)) {
+      await client.query('ROLLBACK');
+      transacaoAberta = false;
+      return res.status(409).json({
+        ...respostaConflitoDireto(conflitos),
+        podeConfirmar: nivel_acesso === 'MASTER',
+      });
+    }
+
+    const resultado = await client.query(`
+      INSERT INTO eventos (titulo, data_inicio, data_fim, horario, duracao_minutos, congregacao_id, criado_por_usuario_id, legenda)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING *;
+    `, [
+      eventoNovo.titulo, data_inicio, data_fim, eventoNovo.horario, duracao,
+      Number(congregacaoFinal), usuario_id, legenda?.trim() || null,
+    ]);
+
+    await client.query('COMMIT');
+    transacaoAberta = false;
+    res.status(201).json({ mensagem: 'Evento criado com sucesso!', evento: resultado.rows[0] });
   } catch (erro) {
-    console.error("Erro ao criar evento:", erro);
-    res.status(500).json({ erro: "Erro ao criar evento" });
+    if (transacaoAberta && client) {
+      try { await client.query('ROLLBACK'); } catch (rollbackErro) {
+        console.error('Erro ao desfazer criação de evento:', rollbackErro);
+      }
+    }
+    console.error('Erro ao criar evento:', erro);
+    res.status(500).json({ erro: 'Erro ao criar evento' });
+  } finally {
+    client?.release();
   }
 });
 
 app.put('/eventos/:id', verificarToken, somenteGestores, async (req, res) => {
+  let client;
+  let transacaoAberta = false;
   try {
     const eventoId = req.params.id;
     const { titulo, data_inicio, data_fim, horario, congregacao_id, legenda } = req.body;
@@ -437,34 +474,75 @@ app.put('/eventos/:id', verificarToken, somenteGestores, async (req, res) => {
       return res.status(400).json({ erro: 'A legenda deve ter no máximo 2000 caracteres.' });
     }
 
-    const eventoRes = await pool.query('SELECT * FROM eventos WHERE id = $1', [eventoId]);
-    if (eventoRes.rowCount === 0) {
-      return res.status(404).json({ erro: "Evento não encontrado." });
-    }
-    const eventoAtual = eventoRes.rows[0];
-
-    if (nivel_acesso === 'ADMIN' && eventoAtual.congregacao_id !== congregacaoAdmin) {
-      return res.status(403).json({ erro: "Admin só pode editar eventos da sua própria congregação." });
-    }
-
     const congregacaoFinal = nivel_acesso === 'MASTER' ? congregacao_id : congregacaoAdmin;
     if (!idValido(congregacaoFinal)) {
       return res.status(400).json({ erro: 'Selecione uma congregação válida.' });
     }
 
-    const query = `
-      UPDATE eventos 
-      SET titulo = $1, data_inicio = $2, data_fim = $3, horario = $4, congregacao_id = $5, legenda = $6
-      WHERE id = $7
-      RETURNING *;
-    `;
-    const valores = [titulo.trim(), data_inicio, data_fim, horario.slice(0, 5), Number(congregacaoFinal), legenda?.trim() || null, eventoId];
-    const resultado = await pool.query(query, valores);
+    client = await pool.connect();
+    await client.query('BEGIN');
+    transacaoAberta = true;
+    await bloquearAgendaDaCongregacao(client, [congregacaoFinal]);
 
-    res.json({ mensagem: "Evento atualizado com sucesso!", evento: resultado.rows[0] });
+    const eventoRes = await client.query('SELECT * FROM eventos WHERE id = $1 FOR UPDATE', [eventoId]);
+    if (eventoRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      transacaoAberta = false;
+      return res.status(404).json({ erro: 'Evento não encontrado.' });
+    }
+
+    const eventoAtual = eventoRes.rows[0];
+    if (nivel_acesso === 'ADMIN' && Number(eventoAtual.congregacao_id) !== Number(congregacaoAdmin)) {
+      await client.query('ROLLBACK');
+      transacaoAberta = false;
+      return res.status(403).json({ erro: 'Admin só pode editar eventos da sua própria congregação.' });
+    }
+
+    const duracao = Number(req.body.duracao_minutos ?? eventoAtual.duracao_minutos ?? 60);
+    if (!Number.isInteger(duracao) || duracao < 15 || duracao > 1440) {
+      await client.query('ROLLBACK');
+      transacaoAberta = false;
+      return res.status(400).json({ erro: 'A duração deve estar entre 15 e 1440 minutos.' });
+    }
+
+    const eventoEditado = {
+      titulo: titulo.trim(), data_inicio, data_fim, horario: horario.slice(0, 5),
+      duracao_minutos: duracao, congregacao_id: Number(congregacaoFinal),
+    };
+    const conflitos = await consultarConflitosPublicados(client, eventoEditado, Number(eventoId));
+    if (conflitos.length > 0 && !(nivel_acesso === 'MASTER' && req.body.confirmar_conflito === true)) {
+      await client.query('ROLLBACK');
+      transacaoAberta = false;
+      return res.status(409).json({
+        ...respostaConflitoDireto(conflitos),
+        podeConfirmar: nivel_acesso === 'MASTER',
+      });
+    }
+
+    const resultado = await client.query(`
+      UPDATE eventos
+      SET titulo = $1, data_inicio = $2, data_fim = $3, horario = $4,
+          congregacao_id = $5, legenda = $6, duracao_minutos = $7
+      WHERE id = $8
+      RETURNING *;
+    `, [
+      eventoEditado.titulo, data_inicio, data_fim, eventoEditado.horario,
+      Number(congregacaoFinal), legenda?.trim() || null, duracao, eventoId,
+    ]);
+
+    await client.query('COMMIT');
+    transacaoAberta = false;
+    res.json({ mensagem: 'Evento atualizado com sucesso!', evento: resultado.rows[0] });
   } catch (erro) {
-    console.error("Erro ao atualizar evento:", erro);
-    res.status(500).json({ erro: "Erro ao atualizar evento" });
+    if (transacaoAberta && client) {
+      try { await client.query('ROLLBACK'); } catch (rollbackErro) {
+        console.error('Erro ao desfazer edição de evento:', rollbackErro);
+      }
+    }
+    console.error('Erro ao atualizar evento:', erro);
+    res.status(500).json({ erro: 'Erro ao atualizar evento' });
+  } finally {
+    client?.release();
   }
 });
 
