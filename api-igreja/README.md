@@ -28,3 +28,27 @@ npm audit --omit=dev
 ```
 
 Os testes atuais isolam regras de autenticação/autorização. A suíte ainda deve ser complementada por integração HTTP contra um PostgreSQL descartável.
+
+## Recuperação e alteração de senha (Agenda ADP 1.1)
+
+- `POST /senha/solicitar-recuperacao`: envia código numérico de 8 dígitos ao e-mail cadastrado. A resposta não informa se a conta existe. Requer `RESEND_API_KEY` e `EMAIL_FROM` no ambiente da API.
+- `POST /senha/redefinir`: recebe `email`, `codigo` e `nova_senha`. Código válido por **15 minutos**, uso único e no máximo **5 erros por código**.
+- `POST /senha/alterar`: autenticada; recebe `senha_atual` e `nova_senha` e exige a senha atual correta.
+- Nova senha: 10 a 128 caracteres, pelo menos uma letra maiúscula, uma minúscula e um número.
+- A alteração ou redefinição incrementa `usuarios.token_version`: todas as sessões antigas deixam de ser aceitas; o usuário deve entrar novamente.
+- Hash do código armazenado via HMAC-SHA256, sem código em texto simples no banco. Há cooldown de 2 minutos entre envios por conta e limites por IP para solicitação e validação.
+
+### Configuração do e-mail
+
+1. Configure um provedor de e-mail transacional (integração implementada com a API HTTP do [Resend](https://resend.com/docs/send-with-nodejs)).
+2. Valide o domínio remetente e configure `EMAIL_FROM` como endereço desse domínio. Use `RESEND_API_KEY` **somente no backend** (ambiente Render e .env local), nunca `EXPO_PUBLIC_` nem Git.
+3. A API usa o endpoint `https://api.resend.com/emails`, sem dependências adicionais.
+4. Sem as duas variáveis de e-mail, a solicitação devolve HTTP **503**; em caso de falha no envio, o servidor registra apenas o erro, sem revelar código ou credenciais.
+5. Garanta que o provedor realmente entregue o e-mail na homologação. Testes automatizados não verificam a entrega real.
+
+### Migração obrigatória
+
+A migração `003_password_recovery.sql` cria `usuarios.token_version` e `senha_recuperacoes`.
+**Antes de executar no Neon**, confira se as variáveis `DB_HOST`/`DB_NAME` apontam para o banco de homologação, faça backup, e execute `npm run db:migrate`. O script registra a migração em `schema_migrations` e não deve ser executado inadvertidamente em produção.
+
+**Não inicie a nova API contra um banco que ainda não tenha aplicado essa migração**: a verificação de sessão consulta `token_version`.
