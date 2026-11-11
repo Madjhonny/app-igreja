@@ -952,33 +952,41 @@ app.post('/comentarios/:id/curtir', verificarToken, verificarAprovacao, async (r
 app.delete('/comentarios/:id', verificarToken, verificarAprovacao, async (req, res) => {
   try {
     const comentario_id = req.params.id;
-    const { id: usuario_id, nivel_acesso, congregacao_id } = req.usuario;
+    const { id: usuario_id, nivel_acesso } = req.usuario;
 
-    const queryInfo = `
-      SELECT c.*, p.congregacao_id as post_congregacao_id 
-      FROM mural_comentarios c
-      JOIN mural_eventos p ON c.post_id = p.id
-      WHERE c.id = $1;
-    `;
-    const comentarioRes = await pool.query(queryInfo, [comentario_id]);
-    if (comentarioRes.rowCount === 0) {
-      return res.status(404).json({ erro: "Comentário não encontrado." });
-    }
-    const com = comentarioRes.rows[0];
-
-    const isMaster = nivel_acesso === 'MASTER';
-    const isDono = com.usuario_id === usuario_id;
-    const isAdminDaCongregacao = nivel_acesso === 'ADMIN' && com.post_congregacao_id === congregacao_id;
-
-    if (!isMaster && !isDono && !isAdminDaCongregacao) {
-      return res.status(403).json({ erro: "Você não tem permissão para excluir este comentário." });
+    if (!idValido(comentario_id)) {
+      return res.status(400).json({ erro: 'Comentário inválido.' });
     }
 
-    await pool.query('DELETE FROM mural_comentarios WHERE id = $1 OR parent_id = $1', [comentario_id]);
-    res.json({ mensagem: "Comentário excluído com sucesso!" });
+    const comentarioRes = await pool.query(
+      'SELECT usuario_id FROM mural_comentarios WHERE id = $1',
+      [comentario_id]
+    );
+    if (!comentarioRes.rowCount) {
+      return res.status(404).json({ erro: 'Comentário não encontrado.' });
+    }
+
+    // O autor exclui o próprio comentário; ADMIN e MASTER moderam todos os comentários.
+    // Contas pendentes já são bloqueadas pelo middleware verificarAprovacao.
+    const autor = Number(comentarioRes.rows[0].usuario_id) === Number(usuario_id);
+    const moderador = nivel_acesso === 'MASTER' || nivel_acesso === 'ADMIN';
+    if (!autor && !moderador) {
+      return res.status(403).json({ erro: 'Você não tem permissão para excluir este comentário.' });
+    }
+
+    // A FK parent_same_post possui ON DELETE CASCADE: respostas descendentes e
+    // curtidas relacionadas são removidas pelo PostgreSQL.
+    const resultado = await pool.query(
+      'DELETE FROM mural_comentarios WHERE id = $1 RETURNING id',
+      [comentario_id]
+    );
+    if (!resultado.rowCount) {
+      return res.status(404).json({ erro: 'Comentário não encontrado.' });
+    }
+    res.json({ mensagem: 'Comentário excluído com sucesso!' });
   } catch (erro) {
-    console.error("Erro ao excluir comentário:", erro);
-    res.status(500).json({ erro: "Erro ao excluir comentário." });
+    console.error('Erro ao excluir comentário:', erro);
+    res.status(500).json({ erro: 'Erro ao excluir comentário.' });
   }
 });
 
