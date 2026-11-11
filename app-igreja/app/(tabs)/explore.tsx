@@ -71,6 +71,11 @@ export default function TelaEventos() {
   const [comentarios, setComentarios] = useState<any[]>([]);
   const [textoComentario, setTextoComentario] = useState('');
   const [respostaPara, setRespostaPara] = useState<any>(null);
+  const [comentarioParaExcluir, setComentarioParaExcluir] = useState<any>(null);
+  const [excluindoComentario, setExcluindoComentario] = useState(false);
+  const [erroComentario, setErroComentario] = useState('');
+  const [avisoComentario, setAvisoComentario] = useState('');
+  const excluindoComentarioRef = useRef(false);
 
   // Estados para curtidas
   const [postsCurtidas, setPostsCurtidas] = useState<{ [key: number]: { total: number, curtiu: boolean } }>({});
@@ -195,8 +200,26 @@ export default function TelaEventos() {
 
   const abrirComentarios = async (postId: number) => {
     setPostSelecionadoId(postId);
+    setComentarioParaExcluir(null);
+    setErroComentario('');
+    setAvisoComentario('');
     setModalComentariosVisivel(true);
     await carregarComentarios(postId);
+  };
+
+  const fecharComentarios = () => {
+    if (excluindoComentarioRef.current) return;
+    setModalComentariosVisivel(false);
+    setComentarioParaExcluir(null);
+    setErroComentario('');
+    setAvisoComentario('');
+  };
+
+  const podeExcluirComentario = (comentario: any) => {
+    if (!podeInteragir || !usuarioLogado) return false;
+    return Number(comentario.usuario_id) === Number(usuarioLogado.id) ||
+      usuarioLogado.nivel_acesso === 'ADMIN' ||
+      usuarioLogado.nivel_acesso === 'MASTER';
   };
 
   const carregarComentarios = async (postId: number) => {
@@ -243,6 +266,60 @@ export default function TelaEventos() {
       }
     } catch {
       mostrarDialogo("Erro", "Não foi possível enviar o comentário.");
+    }
+  };
+
+  const iniciarExclusaoComentario = (comentario: any) => {
+    if (!podeExcluirComentario(comentario) || excluindoComentarioRef.current) return;
+    setErroComentario('');
+    setAvisoComentario('');
+    setComentarioParaExcluir(comentario);
+  };
+
+  const excluirComentario = async () => {
+    if (!comentarioParaExcluir || !podeExcluirComentario(comentarioParaExcluir) || excluindoComentarioRef.current) return;
+
+    const id = Number(comentarioParaExcluir.id);
+    const anteriores = comentarios;
+    // A FK de comentários remove também respostas descendentes. Atualiza a UI com a mesma regra.
+    const removidos = new Set<number>([id]);
+    let encontrou = true;
+    while (encontrou) {
+      encontrou = false;
+      for (const item of anteriores) {
+        if (item.parent_id != null && removidos.has(Number(item.parent_id)) &&
+            !removidos.has(Number(item.id))) {
+          removidos.add(Number(item.id));
+          encontrou = true;
+        }
+      }
+    }
+
+    excluindoComentarioRef.current = true;
+    setExcluindoComentario(true);
+    setErroComentario('');
+    setComentarios(atuais => atuais.filter(item => !removidos.has(Number(item.id))));
+    setComentarioParaExcluir(null);
+
+    try {
+      const resp = await authenticatedFetch(`/comentarios/${id}`, { method: 'DELETE' });
+      if (!resp.ok) {
+        const dados = await resp.json().catch(() => ({}));
+        throw new Error(dados.erro || 'Não foi possível excluir o comentário.');
+      }
+      setRespostaPara(atual => atual && removidos.has(Number(atual.id)) ? null : atual);
+      setComentariosCurtidas(atuais => {
+        const atualizadas = { ...atuais };
+        removidos.forEach(itemId => { delete atualizadas[itemId]; });
+        return atualizadas;
+      });
+      setAvisoComentario('Comentário excluído com sucesso.');
+    } catch (erro) {
+      setComentarios(anteriores);
+      setErroComentario(erro instanceof Error ? erro.message : 'Falha de conexão ao excluir o comentário.');
+    } finally {
+      excluindoComentarioRef.current = false;
+      setExcluindoComentario(false);
     }
   };
 
