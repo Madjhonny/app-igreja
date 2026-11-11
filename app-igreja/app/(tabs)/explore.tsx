@@ -541,17 +541,57 @@ export default function TelaEventos() {
         )}
 
         {/* MODAL DE COMENTÁRIOS NO MODO FULLSCREEN */}
-        <Modal visible={modalComentariosVisivel} animationType="slide" transparent={true} onRequestClose={() => setModalComentariosVisivel(false)}>
+        <Modal visible={modalComentariosVisivel} animationType="slide" transparent={true} onRequestClose={fecharComentarios}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Comentários</Text>
-                <TouchableOpacity onPress={() => setModalComentariosVisivel(false)}>
+                <Text style={styles.modalTitle}>{comentarioParaExcluir ? 'Excluir comentário' : 'Comentários'}</Text>
+                <TouchableOpacity onPress={fecharComentarios}>
                   <Ionicons name="close" size={24} color="#333" />
                 </TouchableOpacity>
               </View>
 
-              <ScrollView style={{ maxHeight: 320, marginBottom: 15 }}>
+              {comentarioParaExcluir ? (
+                <View style={styles.confirmacaoComentario}>
+                  <View style={styles.confirmacaoComentarioIcone}>
+                    <Ionicons name="trash-outline" size={25} color="#D84343" />
+                  </View>
+                  <Text style={styles.confirmacaoComentarioTitulo}>Excluir este comentário?</Text>
+                  <Text style={styles.confirmacaoComentarioAutor}>{comentarioParaExcluir.autor}</Text>
+                  <Text style={styles.confirmacaoComentarioTrecho} numberOfLines={3}>{comentarioParaExcluir.texto}</Text>
+                  <Text style={styles.confirmacaoComentarioAviso}>
+                    As respostas a este comentário também serão removidas.
+                  </Text>
+                  <View style={styles.confirmacaoComentarioAcoes}>
+                    <TouchableOpacity
+                      style={styles.cancelarExclusaoComentario}
+                      onPress={() => setComentarioParaExcluir(null)}
+                      disabled={excluindoComentario}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.cancelarExclusaoComentarioTexto}>Cancelar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.confirmarExclusaoComentario, excluindoComentario && { opacity: 0.6 }]}
+                      onPress={() => void excluirComentario()}
+                      disabled={excluindoComentario}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.confirmarExclusaoComentarioTexto}>
+                        {excluindoComentario ? 'Excluindo...' : 'Excluir'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <>
+                  {erroComentario ? (
+                    <Text accessibilityRole="alert" style={styles.erroComentario}>{erroComentario}</Text>
+                  ) : null}
+                  {avisoComentario ? (
+                    <Text accessibilityRole="alert" style={styles.avisoComentario}>{avisoComentario}</Text>
+                  ) : null}
+                  <ScrollView style={{ maxHeight: 320, marginBottom: 15 }}>
                 {comentarios.length === 0 ? (
                   <Text style={styles.emptyComentarios}>{podeInteragir ? 'Nenhum comentário ainda. Seja o primeiro a comentar!' : 'Nenhum comentário disponível.'}</Text>
                 ) : (
@@ -569,9 +609,19 @@ export default function TelaEventos() {
                         </View>
                         <Text style={styles.comentarioTexto}>{c.texto}</Text>
                         
-                        {podeInteragir && <TouchableOpacity onPress={() => setRespostaPara(c)} style={{marginTop: 4}}>
-                          <Text style={styles.responderText}>Responder</Text>
-                        </TouchableOpacity>}
+                        <View style={styles.comentarioAcoes}>
+                          {podeInteragir && <TouchableOpacity onPress={() => setRespostaPara(c)} disabled={excluindoComentario} accessibilityRole="button">
+                            <Text style={styles.responderText}>Responder</Text>
+                          </TouchableOpacity>}
+                          {podeExcluirComentario(c) && <TouchableOpacity
+                            onPress={() => iniciarExclusaoComentario(c)}
+                            disabled={excluindoComentario}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Excluir comentário de ${c.autor}`}
+                          >
+                            <Text style={styles.excluirComentarioText}>Excluir</Text>
+                          </TouchableOpacity>}
+                        </View>
                       </View>
                     );
                   })
@@ -599,6 +649,8 @@ export default function TelaEventos() {
                   <Ionicons name="send" size={18} color="#fff" />
                 </TouchableOpacity>
               </View>}
+                </>
+              )}
             </View>
           </View>
         </Modal>
@@ -645,17 +697,57 @@ export default function TelaEventos() {
       )}
 
       {/* MODAL DE COMENTÁRIOS NO FEED NORMAL */}
-      <Modal visible={modalComentariosVisivel} animationType="slide" transparent={true} onRequestClose={() => setModalComentariosVisivel(false)}>
+      <Modal visible={modalComentariosVisivel} animationType="slide" transparent={true} onRequestClose={fecharComentarios}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Comentários</Text>
-              <TouchableOpacity onPress={() => setModalComentariosVisivel(false)}>
+              <Text style={styles.modalTitle}>{comentarioParaExcluir ? 'Excluir comentário' : 'Comentários'}</Text>
+              <TouchableOpacity onPress={fecharComentarios}>
                 <Ionicons name="close" size={24} color="#333" />
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ maxHeight: 320, marginBottom: 15 }}>
+            {comentarioParaExcluir ? (
+                <View style={styles.confirmacaoComentario}>
+                  <View style={styles.confirmacaoComentarioIcone}>
+                    <Ionicons name="trash-outline" size={25} color="#D84343" />
+                  </View>
+                  <Text style={styles.confirmacaoComentarioTitulo}>Excluir este comentário?</Text>
+                  <Text style={styles.confirmacaoComentarioAutor}>{comentarioParaExcluir.autor}</Text>
+                  <Text style={styles.confirmacaoComentarioTrecho} numberOfLines={3}>{comentarioParaExcluir.texto}</Text>
+                  <Text style={styles.confirmacaoComentarioAviso}>
+                    As respostas a este comentário também serão removidas.
+                  </Text>
+                  <View style={styles.confirmacaoComentarioAcoes}>
+                    <TouchableOpacity
+                      style={styles.cancelarExclusaoComentario}
+                      onPress={() => setComentarioParaExcluir(null)}
+                      disabled={excluindoComentario}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.cancelarExclusaoComentarioTexto}>Cancelar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.confirmarExclusaoComentario, excluindoComentario && { opacity: 0.6 }]}
+                      onPress={() => void excluirComentario()}
+                      disabled={excluindoComentario}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.confirmarExclusaoComentarioTexto}>
+                        {excluindoComentario ? 'Excluindo...' : 'Excluir'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <>
+                  {erroComentario ? (
+                    <Text accessibilityRole="alert" style={styles.erroComentario}>{erroComentario}</Text>
+                  ) : null}
+                  {avisoComentario ? (
+                    <Text accessibilityRole="alert" style={styles.avisoComentario}>{avisoComentario}</Text>
+                  ) : null}
+                  <ScrollView style={{ maxHeight: 320, marginBottom: 15 }}>
               {comentarios.length === 0 ? (
                 <Text style={styles.emptyComentarios}>{podeInteragir ? 'Nenhum comentário ainda. Seja o primeiro a comentar!' : 'Nenhum comentário disponível.'}</Text>
               ) : (
@@ -673,9 +765,19 @@ export default function TelaEventos() {
                       </View>
                       <Text style={styles.comentarioTexto}>{c.texto}</Text>
                       
-                      {podeInteragir && <TouchableOpacity onPress={() => setRespostaPara(c)} style={{marginTop: 4}}>
-                        <Text style={styles.responderText}>Responder</Text>
-                      </TouchableOpacity>}
+                      <View style={styles.comentarioAcoes}>
+                        {podeInteragir && <TouchableOpacity onPress={() => setRespostaPara(c)} disabled={excluindoComentario} accessibilityRole="button">
+                          <Text style={styles.responderText}>Responder</Text>
+                        </TouchableOpacity>}
+                        {podeExcluirComentario(c) && <TouchableOpacity
+                          onPress={() => iniciarExclusaoComentario(c)}
+                          disabled={excluindoComentario}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Excluir comentário de ${c.autor}`}
+                        >
+                          <Text style={styles.excluirComentarioText}>Excluir</Text>
+                        </TouchableOpacity>}
+                      </View>
                     </View>
                   );
                 })
@@ -703,6 +805,8 @@ export default function TelaEventos() {
                 <Ionicons name="send" size={18} color="#fff" />
               </TouchableOpacity>
             </View>}
+                </>
+              )}
           </View>
         </View>
       </Modal>
@@ -787,6 +891,21 @@ const styles = StyleSheet.create({
   comentarioAutor: { fontSize: 13, fontWeight: 'bold', color: '#2A4B4C' },
   comentarioTexto: { fontSize: 14, color: '#333', marginTop: 2 },
   responderText: { fontSize: 11, color: '#2A4B4C', fontWeight: 'bold' },
+  comentarioAcoes: { flexDirection: 'row', alignItems: 'center', gap: 20, marginTop: 7 },
+  excluirComentarioText: { fontSize: 11, fontWeight: 'bold', color: '#B83E43' },
+  erroComentario: { backgroundColor: '#FFE8E9', color: '#A22C33', padding: 10, borderRadius: 9, marginBottom: 12, fontSize: 13 },
+  avisoComentario: { backgroundColor: '#E2EAE9', color: '#2A4B4C', padding: 10, borderRadius: 9, marginBottom: 12, fontSize: 13 },
+  confirmacaoComentario: { alignItems: 'center', gap: 10, paddingVertical: 12 },
+  confirmacaoComentarioIcone: { backgroundColor: '#FFE8E9', borderRadius: 28, width: 56, height: 56, justifyContent: 'center', alignItems: 'center' },
+  confirmacaoComentarioTitulo: { fontSize: 18, fontWeight: '700', color: '#2A4B4C', textAlign: 'center' },
+  confirmacaoComentarioAutor: { fontSize: 13, fontWeight: '700', color: '#2A4B4C' },
+  confirmacaoComentarioTrecho: { fontSize: 14, textAlign: 'center', color: '#444', backgroundColor: '#F7F5EC', padding: 12, borderRadius: 9, alignSelf: 'stretch' },
+  confirmacaoComentarioAviso: { fontSize: 12, textAlign: 'center', color: '#78634D', marginBottom: 8 },
+  confirmacaoComentarioAcoes: { flexDirection: 'row', gap: 10, alignSelf: 'stretch' },
+  cancelarExclusaoComentario: { flex: 1, backgroundColor: '#E2EAE9', borderRadius: 12, minHeight: 45, alignItems: 'center', justifyContent: 'center' },
+  cancelarExclusaoComentarioTexto: { color: '#2A4B4C', fontWeight: '700' },
+  confirmarExclusaoComentario: { flex: 1, backgroundColor: '#B83E43', borderRadius: 12, minHeight: 45, alignItems: 'center', justifyContent: 'center' },
+  confirmarExclusaoComentarioTexto: { color: '#FFFFFF', fontWeight: '700' },
   respondendoBox: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#E2EAE9', padding: 6, borderRadius: 6, marginBottom: 8 },
   respondendoText: { fontSize: 12, color: '#2A4B4C' },
   comentarioInputRow: { flexDirection: 'row', alignItems: 'center' },
