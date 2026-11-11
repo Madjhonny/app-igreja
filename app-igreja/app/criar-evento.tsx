@@ -1,4 +1,4 @@
-import { useAppAlert } from '@/components/app-dialog';
+import { useAppDialog } from '@/components/app-dialog';
 import { useSessionUser } from '@/hooks/use-session-user';
 import { apiFetch, authenticatedFetch, refreshSession } from '@/services/session';
 import React, { useCallback, useEffect, useState } from 'react';
@@ -7,7 +7,7 @@ import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function TelaCriarEvento() {
-  const Alert = useAppAlert();
+  const { alert: mostrarDialogo } = useAppDialog();
   const params = useLocalSearchParams();
   const [usuario, setUsuario] = useSessionUser();
   const [congregacoes, setCongregacoes] = useState<any[]>([]);
@@ -55,7 +55,7 @@ export default function TelaCriarEvento() {
         }
       }
     } catch {
-      Alert.alert('Erro', 'Não foi possível carregar os dados para criar o evento.');
+      mostrarDialogo('Erro', 'Não foi possível carregar os dados para criar o evento.');
     }
   }, [setUsuario]);
 
@@ -79,7 +79,7 @@ export default function TelaCriarEvento() {
 
   const confirmarDatas = () => {
     if (!dataInicio) {
-      Alert.alert("Atenção", "Selecione pelo menos a data de início.");
+      mostrarDialogo("Atenção", "Selecione pelo menos a data de início.");
       return;
     }
     if (!dataFim) setDataFim(dataInicio);
@@ -99,12 +99,12 @@ export default function TelaCriarEvento() {
 
   const criarEvento = async (confirmarConflito = false) => {
     if (!titulo || !dataInicio || !horario) {
-      Alert.alert('Atenção', 'Preencha o Título, o Período e o Horário de Início.');
+      mostrarDialogo('Atenção', 'Preencha o Título, o Período e o Horário de Início.');
       return;
     }
 
     if (usuario?.nivel_acesso === 'MASTER' && !congregacaoId) {
-      Alert.alert('Atenção', 'O Master deve selecionar obrigatoriamente uma congregação.');
+      mostrarDialogo('Atenção', 'O Master deve selecionar obrigatoriamente uma congregação.');
       return;
     }
 
@@ -127,7 +127,7 @@ export default function TelaCriarEvento() {
       const dados = await resposta.json();
 
       if (resposta.ok) {
-        Alert.alert('Sucesso', 'Evento criado com sucesso!', [
+        mostrarDialogo('Sucesso', 'Evento criado com sucesso!', [
           { text: 'OK', onPress: () => router.back() }
         ]);
       } else if (resposta.status === 409 && dados.codigo === 'CONFLITO_AGENDA' && dados.podeConfirmar) {
@@ -135,16 +135,16 @@ export default function TelaCriarEvento() {
           .map((ev: any) => '• ' + ev.titulo).join('\n');
         const aviso = 'Há eventos da mesma congregação neste horário:\n' + encontrados +
           '\n\nDeseja criar o evento mesmo assim?';
-        Alert.alert('Conflito de agenda', aviso, [
+        mostrarDialogo('Conflito de agenda', aviso, [
           { text: 'Voltar e revisar', style: 'cancel' },
           { text: 'Criar mesmo assim', onPress: () => void criarEvento(true) },
         ]);
       } else {
         const avisoErro = dados.erro || 'Falha ao criar evento.';
-        Alert.alert('Erro', avisoErro);
+        mostrarDialogo('Erro', avisoErro);
       }
     } catch {
-      Alert.alert('Erro', 'Não foi possível conectar ao servidor.');
+      mostrarDialogo('Erro', 'Não foi possível conectar ao servidor.');
     } finally {
       setCarregando(false);
     }
