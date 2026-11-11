@@ -1,4 +1,4 @@
-import { useAppAlert, useAppDialog } from '@/components/app-dialog';
+import { useAppDialog } from '@/components/app-dialog';
 import { API_URL, apiFetch, getSessionToken } from '@/services/session';
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -23,8 +23,7 @@ const ordenarEventos = (eventos: any[]) => [...eventos].sort((a, b) =>
 );
 
 export default function TelaGestaoDatas() {
-  const Alert = useAppAlert();
-  const { showDialog } = useAppDialog();
+  const { alert: mostrarDialogo, showDialog } = useAppDialog();
   const { width, height: windowHeight } = useWindowDimensions();
   const isDesktop = width >= 900;
 
@@ -91,7 +90,7 @@ export default function TelaGestaoDatas() {
   }, [mensagemOperacao]);
 
   const mostrarAviso = (titulo: string, mensagem: string) => {
-    Alert.alert(titulo, mensagem);
+    mostrarDialogo(titulo, mensagem);
   };
 
   function formatarData(data: Date) {
@@ -200,7 +199,7 @@ export default function TelaGestaoDatas() {
       }
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
-      Alert.alert('Erro', 'Não foi possível carregar os dados.');
+      mostrarDialogo('Erro', 'Não foi possível carregar os dados.');
     } finally {
       setCarregando(false);
     }
@@ -323,7 +322,7 @@ export default function TelaGestaoDatas() {
   const salvarCriacaoRapida = () => {
     const validarHora = (valor: string) => /^([01]\d|2[0-3]):([0-5]\d)$/.test(valor);
     if (!validarHora(horario) || !validarHora(horarioFimRapido)) {
-      return Alert.alert('Horário inválido', 'Informe os horários no formato HH:MM.');
+      return mostrarDialogo('Horário inválido', 'Informe os horários no formato HH:MM.');
     }
     const [horaInicio, minutoInicio] = horario.split(':').map(Number);
     const [horaFim, minutoFim] = horarioFimRapido.split(':').map(Number);
@@ -331,7 +330,7 @@ export default function TelaGestaoDatas() {
     const fim = horaFim * 60 + minutoFim;
     const duracao = fim - inicio;
     if (duracao < 15 || duracao > 1440) {
-      return Alert.alert('Horário inválido', 'O término deve ser posterior ao início, com duração mínima de 15 minutos.');
+      return mostrarDialogo('Horário inválido', 'O término deve ser posterior ao início, com duração mínima de 15 minutos.');
     }
     setDuracaoMinutos(String(duracao));
     salvarEventoRascunho(duracao);
@@ -357,7 +356,7 @@ export default function TelaGestaoDatas() {
 
   const confirmarDatas = () => {
     if (!dataInicio) {
-      return Alert.alert('Atenção', 'Selecione a data.');
+      return mostrarDialogo('Atenção', 'Selecione a data.');
     }
 
     if (!dataFim) {
@@ -1994,7 +1993,7 @@ export default function TelaGestaoDatas() {
                   minuto < 0 ||
                   minuto > 59
                 ) {
-                  return Alert.alert(
+                  return mostrarDialogo(
                     'Horário inválido',
                     'Informe uma hora entre 00 e 23 e minutos entre 00 e 59.'
                   );
