@@ -1,5 +1,5 @@
 import { useSessionUser } from '@/hooks/use-session-user';
-import { apiFetch, authenticatedFetch, getSessionToken, getStoredUser } from '@/services/session';
+import { apiFetch, authenticatedFetch, canManage, getSessionToken, getStoredUser } from '@/services/session';
 import React, { useState, useCallback } from 'react';
 import { StyleSheet, Text, View, FlatList, TouchableOpacity, ActivityIndicator, Alert, Modal, Image, ScrollView } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
@@ -128,7 +128,8 @@ export default function TelaUsuariosCongregacao() {
     </TouchableOpacity>
   );
 
-  const ehMaster = usuarioLogado?.nivel_acesso === 'MASTER';
+  const podeGerenciar = canManage(usuarioLogado);
+  const ehMaster = podeGerenciar && usuarioLogado?.nivel_acesso === 'MASTER';
 
   return (
     <View style={styles.container}>
@@ -198,7 +199,7 @@ export default function TelaUsuariosCongregacao() {
               <Text style={styles.detalhesInfo}>🛡️ Status: {usuarioSelecionado?.status_conta}</Text>
             </View>
 
-            <View style={styles.actionsRow}>
+            {podeGerenciar && <View style={styles.actionsRow}>
               <TouchableOpacity 
                 style={[styles.actionButton, !ehMaster && { width: '100%', flex: undefined }]} 
                 onPress={() => setModalStatusVisivel(true)}
@@ -213,7 +214,7 @@ export default function TelaUsuariosCongregacao() {
                   <Text style={styles.actionText}>Mudar Nível</Text>
                 </TouchableOpacity>
               )}
-            </View>
+            </View>}
           </View>
         </View>
       </Modal>

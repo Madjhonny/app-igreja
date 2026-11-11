@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
   StyleSheet,
   Text,
   View,
+  Image,
   TextInput,
   TouchableOpacity,
   ActivityIndicator,
@@ -10,6 +11,7 @@ import {
   ScrollView,
   Platform,
 } from 'react-native';
+import type { TextInputInstance } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { apiFetch, clearSession, getSessionToken, refreshSession, saveSession, shouldKeepSignedIn } from '@/services/session';
 import { Ionicons } from '@expo/vector-icons'; // Importado para usar o ícone de checkbox
@@ -32,7 +34,9 @@ export default function TelaLogin() {
   const aviso = mensagem || motivo;
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
+  const [mostrarSenha, setMostrarSenha] = useState(false);
   const [carregando, setCarregando] = useState(false);
+  const senhaRef = useRef<TextInputInstance>(null);
 
   // Novo estado para o Checkbox
   const [manterConectado, setManterConectado] = useState(false);
@@ -104,13 +108,16 @@ export default function TelaLogin() {
         overScrollMode="never"
       >
         <View style={styles.logoContainer}>
-          {/* LOGO: quando o arquivo da logo estiver no projeto, substitua os dois textos abaixo por:
-              <Image source={require('../assets/logo.png')} style={styles.logoImage} resizeMode="contain" />
-              (lembre de importar Image de 'react-native' e ajustar o caminho) */}
+          <View style={styles.logoMark}>
+            <Image
+              source={require('../assets/images/logo.jpg')}
+              style={styles.logoMarkImage}
+              resizeMode="cover"
+              accessible={false}
+            />
+          </View>
           <Text style={styles.logoText}>Agenda ADP</Text>
-          <View style={styles.logoTraco} />
-          <Text style={styles.subLogoText}>Igreja Matriz & Congregações</Text>
-          {verificandoSessao && <ActivityIndicator color={cores.verde} />}
+          {verificandoSessao && <ActivityIndicator color={cores.bege} style={styles.sessionIndicator} />}
           {!!aviso && <View style={{ padding: 12, marginVertical: 12, backgroundColor: cores.suave, borderRadius: 10 }}>
             <Text accessibilityRole="alert" style={{ color: cores.verde }}>{aviso}</Text>
             <TouchableOpacity onPress={verificarLoginSalvo} disabled={verificandoSessao || carregando} style={{ paddingTop: 10 }}>
@@ -145,29 +152,50 @@ export default function TelaLogin() {
 
             <View style={styles.campo}>
               <Text style={styles.label}>Senha</Text>
-              <TextInput 
-                style={[
-                  styles.input,
-                  senha.length > 0 && styles.inputPreenchido,
-                  campoFocado === 'senha' && styles.inputFocado,
-                ]} 
-                placeholder="Digite sua senha"
-                placeholderTextColor={cores.verdeSutil}
-                selectionColor={cores.verde}
-                secureTextEntry
-                autoComplete="current-password"
-                accessibilityLabel="Senha"
-                value={senha}
-                onChangeText={setSenha}
-                onFocus={() => setCampoFocado('senha')}
-                onBlur={() => setCampoFocado(null)}
-              />
+              <View collapsable={false} style={styles.passwordField}>
+                <TextInput
+                  ref={senhaRef}
+                  style={[
+                    styles.input,
+                    styles.passwordInput,
+                    senha.length > 0 && styles.inputPreenchido,
+                    campoFocado === 'senha' && styles.inputFocado,
+                  ]}
+                  placeholder="Digite sua senha"
+                  placeholderTextColor={cores.verdeSutil}
+                  selectionColor={cores.verde}
+                  secureTextEntry={!mostrarSenha}
+                  autoComplete="current-password"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  accessibilityLabel="Senha"
+                  value={senha}
+                  onChangeText={setSenha}
+                  onFocus={() => setCampoFocado('senha')}
+                  onBlur={() => setCampoFocado(null)}
+                />
+                <TouchableOpacity
+                  style={styles.eyeButton}
+                  onPress={() => {
+                    setMostrarSenha((atual) => !atual);
+                    requestAnimationFrame(() => senhaRef.current?.focus());
+                  }}
+                  accessibilityRole="button"
+                  accessibilityLabel={mostrarSenha ? 'Ocultar senha' : 'Mostrar senha'}
+                >
+                  <Ionicons
+                    name={mostrarSenha ? 'eye-off' : 'eye'}
+                    size={22}
+                    color={cores.verdeTexto}
+                  />
+                </TouchableOpacity>
+              </View>
             </View>
 
             {/* === NOVO BOTÃO DE MANTER CONECTADO === */}
             <TouchableOpacity 
               style={styles.checkboxContainer} 
-              onPress={() => setManterConectado(!manterConectado)}
+              onPress={() => setManterConectado((atual) => !atual)}
               activeOpacity={0.7}
               accessibilityRole="checkbox"
               accessibilityLabel="Manter conectado"
@@ -211,11 +239,11 @@ const styles = StyleSheet.create({
   scrollContent: { flexGrow: 1 },
 
   // Cabeçalho da marca
-  logoContainer: { alignItems: 'center', paddingTop: 80, paddingBottom: 44, paddingHorizontal: 24 },
-  logoText: { fontSize: 34, fontWeight: '700', letterSpacing: 0.4, color: cores.bege },
-  logoTraco: { width: 32, height: 2, borderRadius: 1, backgroundColor: cores.neutro, marginVertical: 12 },
-  subLogoText: { fontSize: 15, letterSpacing: 0.6, color: cores.neutro, textAlign: 'center' },
-  logoImage: { width: 200, height: 80 },
+  logoContainer: { alignItems: 'center', paddingTop: 56, paddingBottom: 36, paddingHorizontal: 24 },
+  logoMark: { width: 132, height: 132, borderRadius: 66, overflow: 'hidden', backgroundColor: cores.bege },
+  logoMarkImage: { width: '100%', height: '100%', transform: [{ scale: 1.9 }] },
+  logoText: { marginTop: 14, fontSize: 34, fontWeight: '700', letterSpacing: 0.4, color: cores.bege },
+  sessionIndicator: { marginTop: 12 },
 
   // Painel do formulário (sheet claro sobre o fundo verde)
   formContainer: {
@@ -249,6 +277,9 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     shadowOffset: { width: 0, height: 2 },
   },
+  passwordField: { position: 'relative' },
+  passwordInput: { paddingRight: 60 },
+  eyeButton: { position: 'absolute', right: 5, top: 5, width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
 
   // Estilos do Checkbox
   checkboxContainer: { flexDirection: 'row', alignItems: 'center', marginTop: 2, marginBottom: 26 },

@@ -1,5 +1,5 @@
 import { useSessionUser } from '@/hooks/use-session-user';
-import { authenticatedFetch, getStoredUser, getSessionToken } from '@/services/session';
+import { authenticatedFetch, canManage, getStoredUser, getSessionToken } from '@/services/session';
 import React, { useState, useCallback } from 'react';
 import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
 import { router, useFocusEffect, Stack } from 'expo-router';
@@ -89,7 +89,7 @@ export default function TelaGestaoUsuarios() {
       ) : (
         <ScrollView contentContainerStyle={styles.listContainer}>
           {/* Botão de Gestão de Datas (Exclusivo Master) */}
-          {usuarioLogado?.nivel_acesso === 'MASTER' && (
+          {usuarioLogado?.nivel_acesso === 'MASTER' && canManage(usuarioLogado) && (
             <TouchableOpacity 
               style={styles.folderCard} 
               onPress={() => router.push('/gestao-datas' as any)}

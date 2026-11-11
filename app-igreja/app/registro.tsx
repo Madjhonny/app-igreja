@@ -1,6 +1,7 @@
-import { apiFetch } from '@/services/session';
-import React, { useCallback, useEffect, useState } from 'react';
+import { apiFetch, saveSession } from '@/services/session';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal, FlatList, Image, KeyboardAvoidingView, Platform } from 'react-native';
+import type { TextInputInstance } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
@@ -35,8 +36,13 @@ export default function TelaRegistro() {
   // === ESTADOS DE CONTROLE DE UI ===
   const [modalVisivel, setModalVisivel] = useState(false);
   const [carregando, setCarregando] = useState(false);
+  const [cadastroConcluido, setCadastroConcluido] = useState(false);
+  const [autenticandoConvidado, setAutenticandoConvidado] = useState(false);
+  const [erroAcessoConvidado, setErroAcessoConvidado] = useState('');
   const [mostrarSenha, setMostrarSenha] = useState(false);
   const [mostrarConfirmarSenha, setMostrarConfirmarSenha] = useState(false);
+  const senhaRef = useRef<TextInputInstance>(null);
+  const confirmarSenhaRef = useRef<TextInputInstance>(null);
 
   // === ESTADOS DE ERRO ===
   const [erroEmail, setErroEmail] = useState('');
@@ -46,7 +52,7 @@ export default function TelaRegistro() {
   const [campoFocado, setCampoFocado] = useState<string | null>(null);
   const foco = (campo: string) => ({
     onFocus: () => setCampoFocado(campo),
-    onBlur: () => setCampoFocado(null),
+    onBlur: () => setCampoFocado((campoAtual) => campoAtual === campo ? null : campoAtual),
   });
   const estadosVisuais = (campo: string, valor: string, erro: string) => [
     valor.length > 0 && styles.inputPreenchido,
@@ -175,11 +181,18 @@ export default function TelaRegistro() {
         })
       });
 
-      const dados = await resposta.json();
-      if (resposta.ok) {
-        Alert.alert('Sucesso!', 'Sua conta foi criada.\n\nVocê entrará como PENDENTE e aguardará aprovação.', [{ text: 'OK', onPress: () => router.back() }]);
+      const dados = await resposta.json().catch(() => null);
+      const cadastroValido = resposta.status === 201
+        && Number.isSafeInteger(dados?.usuario?.id)
+        && dados.usuario.status_conta === 'PENDENTE';
+
+      if (cadastroValido) {
+        setErroAcessoConvidado('');
+        setCadastroConcluido(true);
+      } else if (!resposta.ok) {
+        Alert.alert('Erro', dados?.erro || 'Falha ao cadastrar.');
       } else {
-        Alert.alert('Erro', dados.erro || 'Falha ao cadastrar.');
+        Alert.alert('Erro', 'O servidor retornou uma resposta de cadastro inválida. Tente entrar manualmente.');
       }
     } catch {
       Alert.alert('Erro de Conexão', 'Não foi possível conectar ao servidor.');
@@ -187,6 +200,100 @@ export default function TelaRegistro() {
       setCarregando(false);
     }
   };
+
+  const acessarComoConvidado = async () => {
+    if (autenticandoConvidado) return;
+
+    setErroAcessoConvidado('');
+    setAutenticandoConvidado(true);
+    try {
+      const resposta = await apiFetch('/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim().toLowerCase(), senha }),
+      });
+      const dados = await resposta.json().catch(() => null);
+      const sessaoValida = resposta.ok
+        && typeof dados?.token === 'string'
+        && dados.token.length > 0
+        && Number.isSafeInteger(dados?.usuario?.id);
+
+      if (!sessaoValida) {
+        setErroAcessoConvidado(
+          dados?.erro
+            ? `${dados.erro} Você também pode entrar manualmente.`
+            : 'Não foi possível acessar como convidado. Entre manualmente para continuar.',
+        );
+        return;
+      }
+
+      await saveSession(dados.token, dados.usuario, false);
+      setSenha('');
+      setConfirmarSenha('');
+      router.replace('/(tabs)/agenda');
+    } catch {
+      setErroAcessoConvidado('Não foi possível conectar ao servidor. Entre manualmente para continuar.');
+    } finally {
+      setAutenticandoConvidado(false);
+    }
+  };
+
+  if (cadastroConcluido) {
+    return (
+      <View style={styles.container}>
+        <View style={styles.header}>
+          <Text accessibilityRole="header" style={styles.headerTitle}>Cadastro concluído</Text>
+        </View>
+
+        <ScrollView
+          style={styles.painel}
+          contentContainerStyle={styles.confirmationContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.confirmationCard}>
+            <Ionicons accessibilityElementsHidden importantForAccessibility="no-hide-descendants" name="checkmark-circle" size={64} color={cores.verde} />
+            <Text accessibilityRole="header" style={styles.confirmationTitle}>Cadastro realizado com sucesso!</Text>
+            <Text style={styles.confirmationText}>Sua conta foi criada e está aguardando aprovação.</Text>
+            <Text style={styles.confirmationText}>
+              Entre em contato com o secretário da sua congregação para solicitar a aprovação do seu cadastro.
+            </Text>
+            <Text style={styles.confirmationText}>
+              Enquanto aguarda, você poderá acessar o Agenda ADP como convidado e acompanhar as informações disponíveis.
+            </Text>
+
+            {!!erroAcessoConvidado && (
+              <Text accessibilityRole="alert" style={styles.guestAccessError}>{erroAcessoConvidado}</Text>
+            )}
+
+            <TouchableOpacity
+              style={[styles.guestAccessButton, autenticandoConvidado && styles.buttonDisabled]}
+              onPress={() => void acessarComoConvidado()}
+              disabled={autenticandoConvidado}
+              activeOpacity={0.85}
+              accessibilityRole="button"
+              accessibilityLabel="Acessar como convidado"
+              accessibilityState={{ disabled: autenticandoConvidado, busy: autenticandoConvidado }}
+            >
+              {autenticandoConvidado
+                ? <ActivityIndicator color={cores.bege} />
+                : <Text style={styles.saveButtonText}>ACESSAR COMO CONVIDADO</Text>}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.loginLinkButton}
+              onPress={() => router.replace('/login')}
+              disabled={autenticandoConvidado}
+              accessibilityRole="button"
+              accessibilityLabel="Voltar ao login"
+              accessibilityState={{ disabled: autenticandoConvidado }}
+            >
+              <Text style={styles.loginLinkText}>Voltar ao login</Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
@@ -199,13 +306,14 @@ export default function TelaRegistro() {
 
       <KeyboardAvoidingView 
         style={styles.painel} 
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       >
         <ScrollView 
           style={styles.formContainer}
-          contentContainerStyle={styles.scrollContent} // <--- Espaço vazio garantido no final
+          contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled" // <--- Permite clicar mesmo com o teclado aberto
+          keyboardShouldPersistTaps="handled"
         >
           <View style={styles.formInner}>
             <View style={styles.fotoContainer}>
@@ -227,6 +335,8 @@ export default function TelaRegistro() {
               placeholder="Ex: João da Silva"
               placeholderTextColor={cores.verdeSutil}
               selectionColor={cores.verde}
+              autoComplete={Platform.OS === 'android' ? 'off' : undefined}
+              importantForAutofill={Platform.OS === 'android' ? 'no' : undefined}
               value={nome}
               onChangeText={setNome}
               {...foco('nome')}
@@ -239,6 +349,8 @@ export default function TelaRegistro() {
               placeholderTextColor={cores.verdeSutil}
               selectionColor={cores.verde}
               keyboardType="numeric"
+              autoComplete={Platform.OS === 'android' ? 'off' : undefined}
+              importantForAutofill={Platform.OS === 'android' ? 'no' : undefined}
               value={cpf}
               onChangeText={aplicarMascaraCPF}
               maxLength={14}
@@ -252,6 +364,8 @@ export default function TelaRegistro() {
               placeholderTextColor={cores.verdeSutil}
               selectionColor={cores.verde}
               keyboardType="phone-pad"
+              autoComplete={Platform.OS === 'android' ? 'off' : undefined}
+              importantForAutofill={Platform.OS === 'android' ? 'no' : undefined}
               value={telefone}
               onChangeText={aplicarMascaraTelefone}
               maxLength={15}
@@ -266,6 +380,8 @@ export default function TelaRegistro() {
               selectionColor={cores.verde}
               keyboardType="email-address" 
               autoCapitalize="none" 
+              autoComplete={Platform.OS === 'android' ? 'off' : undefined}
+              importantForAutofill={Platform.OS === 'android' ? 'no' : undefined}
               value={email} 
               onChangeText={validarEmail} 
               {...foco('email')}
@@ -273,35 +389,70 @@ export default function TelaRegistro() {
             {erroEmail ? <Text style={styles.errorText}>{erroEmail}</Text> : null}
 
             <Text style={styles.label}>Senha</Text>
-            <View style={[styles.passwordContainer, ...estadosVisuais('senha', senha, erroSenha)]}>
+            {/* Mantém a hierarquia nativa estável quando o foco adiciona sombra no Fabric/Android. */}
+            <View collapsable={false} style={[styles.passwordContainer, ...estadosVisuais('senha', senha, erroSenha)]}>
               <TextInput 
+                ref={senhaRef}
                 style={styles.passwordInput} 
                 placeholder="Crie uma senha forte" 
                 placeholderTextColor={cores.verdeSutil}
                 selectionColor={cores.verde}
                 secureTextEntry={!mostrarSenha} 
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete={Platform.OS === 'android' ? 'off' : 'new-password'}
+                importantForAutofill={Platform.OS === 'android' ? 'no' : undefined}
+                returnKeyType="next"
+                submitBehavior="submit"
+                accessibilityLabel="Senha"
                 value={senha} 
                 onChangeText={(texto) => validarSenha(texto, confirmarSenha)} 
+                onPressIn={() => senhaRef.current?.focus()}
+                onSubmitEditing={() => confirmarSenhaRef.current?.focus()}
                 {...foco('senha')}
               />
-              <TouchableOpacity onPress={() => setMostrarSenha(!mostrarSenha)} style={styles.eyeIcon} accessibilityRole="button" accessibilityLabel={mostrarSenha ? 'Ocultar senha' : 'Mostrar senha'}>
+              <TouchableOpacity
+                onPress={() => {
+                  setMostrarSenha(atual => !atual);
+                  requestAnimationFrame(() => senhaRef.current?.focus());
+                }}
+                style={styles.eyeIcon}
+                accessibilityRole="button"
+                accessibilityLabel={mostrarSenha ? 'Ocultar senha' : 'Mostrar senha'}
+              >
                 <Ionicons name={mostrarSenha ? "eye-off" : "eye"} size={22} color={cores.verdeTexto} />
               </TouchableOpacity>
             </View>
 
             <Text style={styles.label}>Confirmar Senha</Text>
-            <View style={[styles.passwordContainer, ...estadosVisuais('confirmarSenha', confirmarSenha, erroSenha)]}>
+            <View collapsable={false} style={[styles.passwordContainer, ...estadosVisuais('confirmarSenha', confirmarSenha, erroSenha)]}>
               <TextInput 
+                ref={confirmarSenhaRef}
                 style={styles.passwordInput} 
                 placeholder="Repita sua senha" 
                 placeholderTextColor={cores.verdeSutil}
                 selectionColor={cores.verde}
                 secureTextEntry={!mostrarConfirmarSenha} 
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete={Platform.OS === 'android' ? 'off' : 'new-password'}
+                importantForAutofill={Platform.OS === 'android' ? 'no' : undefined}
+                returnKeyType="done"
+                accessibilityLabel="Confirmar senha"
                 value={confirmarSenha} 
                 onChangeText={validarConfirmacaoSenha} 
+                onPressIn={() => confirmarSenhaRef.current?.focus()}
                 {...foco('confirmarSenha')}
               />
-              <TouchableOpacity onPress={() => setMostrarConfirmarSenha(!mostrarConfirmarSenha)} style={styles.eyeIcon} accessibilityRole="button" accessibilityLabel={mostrarConfirmarSenha ? 'Ocultar confirmação de senha' : 'Mostrar confirmação de senha'}>
+              <TouchableOpacity
+                onPress={() => {
+                  setMostrarConfirmarSenha(atual => !atual);
+                  requestAnimationFrame(() => confirmarSenhaRef.current?.focus());
+                }}
+                style={styles.eyeIcon}
+                accessibilityRole="button"
+                accessibilityLabel={mostrarConfirmarSenha ? 'Ocultar confirmação de senha' : 'Mostrar confirmação de senha'}
+              >
                 <Ionicons name={mostrarConfirmarSenha ? "eye-off" : "eye"} size={22} color={cores.verdeTexto} />
               </TouchableOpacity>
             </View>
@@ -399,14 +550,15 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     height: 54,
+    minHeight: 54,
     backgroundColor: cores.branco,
     borderWidth: 1,
     borderColor: cores.neutro,
     borderRadius: 14,
-    paddingHorizontal: 16,
+    paddingRight: 4,
   },
-  passwordInput: { flex: 1, height: '100%', fontSize: 16, color: cores.verde },
-  eyeIcon: { padding: 5 },
+  passwordInput: { flex: 1, minWidth: 0, height: 54, paddingLeft: 16, paddingRight: 8, paddingVertical: 0, fontSize: 16, color: cores.verde },
+  eyeIcon: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
 
   // Estados visuais dos campos (a ordem no array garante a prioridade: erro > foco > preenchido)
   inputPreenchido: { borderColor: cores.verdeSutil },
@@ -450,6 +602,15 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: { opacity: 0.7 },
   saveButtonText: { color: cores.bege, fontSize: 16, fontWeight: '700', letterSpacing: 1.2 },
+
+  confirmationContent: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 24, paddingVertical: 36 },
+  confirmationCard: { width: '100%', maxWidth: 480, alignSelf: 'center', alignItems: 'center', backgroundColor: cores.branco, borderRadius: 20, paddingHorizontal: 24, paddingVertical: 32, borderWidth: 1, borderColor: cores.suave },
+  confirmationTitle: { marginTop: 14, marginBottom: 18, color: cores.verde, fontSize: 23, fontWeight: '700', textAlign: 'center' },
+  confirmationText: { color: cores.verdeTexto, fontSize: 16, lineHeight: 23, textAlign: 'center', marginBottom: 12 },
+  guestAccessError: { width: '100%', color: cores.erro, fontSize: 13, lineHeight: 19, textAlign: 'center', marginTop: 6, marginBottom: 4, fontWeight: '600' },
+  guestAccessButton: { width: '100%', minHeight: 54, backgroundColor: cores.verde, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginTop: 18, paddingHorizontal: 12 },
+  loginLinkButton: { marginTop: 16, minHeight: 44, paddingHorizontal: 16, alignItems: 'center', justifyContent: 'center' },
+  loginLinkText: { color: cores.verde, fontSize: 15, fontWeight: '700' },
   
   // Modal de congregações
   modalOverlay: { flex: 1, backgroundColor: 'rgba(42, 75, 76, 0.55)', justifyContent: 'center', alignItems: 'center' },
