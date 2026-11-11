@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { Animated, Easing, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { Animated, Easing, Platform, StyleSheet, View, useWindowDimensions } from 'react-native';
 import { Tabs } from 'expo-router';
 import { BottomTabBar } from '@react-navigation/bottom-tabs';
 import type { BottomTabBarProps } from '@react-navigation/bottom-tabs';
@@ -11,6 +11,7 @@ const CINZA = '#a3a3a3';
 const DURACAO_TRANSICAO = 270;
 const LARGURA_INDICADOR = 32;
 const suavizacao = Easing.inOut(Easing.cubic);
+const usarDriverNativo = Platform.OS !== 'web';
 
 // O indicador do rodapé e as cenas utilizam a mesma duração e curva.
 // Preservamos o Tabs e o BottomTabBar originais para não alterar a navegação.
@@ -31,7 +32,7 @@ function IconeAba({ nome, cor, selecionado }: { nome: NomeIcone; cor: string; se
         toValue: 0,
         duration: DURACAO_TRANSICAO,
         easing: suavizacao,
-        useNativeDriver: true,
+        useNativeDriver: usarDriverNativo,
       }).start();
     } else if (!selecionado) {
       deslocamento.stopAnimation();
@@ -67,7 +68,7 @@ function BarraAbasAnimada(props: BottomTabBarProps) {
       toValue: state.index,
       duration: DURACAO_TRANSICAO,
       easing: suavizacao,
-      useNativeDriver: true,
+      useNativeDriver: usarDriverNativo,
     }).start();
   }, [progresso, state.index]);
 
