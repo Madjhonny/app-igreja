@@ -542,93 +542,79 @@ export default function TelaGestaoDatas() {
   // =====================================================
 
   const publicarNaAgendaGeral = () => {
-    const totalRevisar = eventosPlanejados.filter(
-      (ev) => ev.marcador === 'REVISAR'
-    ).length;
+    if (publicandoRef.current || eventosPlanejados.length === 0) return;
 
-    const totalConflito = eventosPlanejados.filter(
-      (ev) => ev.marcador === 'CONFLITO'
-    ).length;
-
-    let mensagemAviso =
-      'Deseja publicar todos os eventos organizados na Agenda? Após a publicação, eles ficarão disponíveis na Agenda geral.';
-
-    if (totalRevisar > 0 || totalConflito > 0) {
-      mensagemAviso =
-        'ATENÇÃO: Existem eventos pendentes de revisão antes da publicação:\n\n';
-
-      if (totalRevisar > 0) {
-        mensagemAviso += `🟡 ${totalRevisar} evento(s) para revisar\n`;
-      }
-
-      if (totalConflito > 0) {
-        mensagemAviso += `🔴 ${totalConflito} evento(s) com conflito/atenção\n`;
-      }
-
-      mensagemAviso +=
-        '\nDeseja prosseguir com a publicação mesmo assim?';
-    }
-
-    const executarPublicacao = async () => {
+    const executarPublicacao = async (confirmarConflitos = false) => {
       if (publicandoRef.current) return;
       publicandoRef.current = true;
       setPublicando(true);
       const idsPublicados = new Set(eventosPlanejados.map(ev => ev.id));
+      let confirmacaoNecessaria: any = null;
+
       try {
         const resp = await apiFetch(`${API_URL}/gestao-datas/publicar`, {
           method: 'POST',
           headers: {
+            'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
+          body: JSON.stringify({ confirmar_conflitos: confirmarConflitos }),
         });
 
-        const dados = await resp.json();
+        const dados = await resp.json().catch(() => ({}));
 
         if (resp.ok) {
-          // Retira apenas os rascunhos efetivamente presentes no momento do envio.
           revisaoLocalRef.current += 1;
           setEventosPlanejados(atuais => atuais.filter(ev => !idsPublicados.has(ev.id)));
           setMensagemOperacao(dados.mensagem || 'Eventos publicados com sucesso!');
+        } else if (resp.status === 409 && dados.codigo === 'CONFIRMACAO_CONFLITOS_NECESSARIA') {
+          confirmacaoNecessaria = dados;
         } else {
-          if (Platform.OS === 'web') {
-            window.alert(dados.erro || 'Falha ao publicar.');
-          } else {
-            Alert.alert('Erro', dados.erro || 'Falha ao publicar.');
-          }
+          mostrarAviso('Erro', dados.erro || 'Falha ao publicar.');
         }
       } catch (error) {
         console.error('Erro ao publicar:', error);
-
-        if (Platform.OS === 'web') {
-          window.alert('Falha de conexão com o servidor.');
-        } else {
-          Alert.alert('Erro', 'Falha de conexão.');
-        }
+        mostrarAviso('Erro', 'Falha de conexão com o servidor.');
       } finally {
         publicandoRef.current = false;
         setPublicando(false);
       }
+
+      if (confirmacaoNecessaria) {
+        const { resumo = {}, conflitos = [] } = confirmacaoNecessaria;
+        const detalhes = conflitos.slice(0, 3)
+          .map((item: any) => `• ${item.titulo} × ${item.evento_conflitante} (${item.origem})`);
+        const mensagem = [
+          'O servidor encontrou situações que exigem confirmação do MASTER:',
+          `Sobreposições: ${resumo.sobreposicoesEncontradas || 0}`,
+          `Marcados para revisar: ${resumo.revisar || 0}`,
+          `Marcados como conflito: ${resumo.marcadosConflito || 0}`,
+          ...detalhes,
+          '',
+          'Deseja publicar mesmo assim?',
+        ].join('\n');
+
+        // A segunda chamada ocorre apenas após o usuário aceitar o aviso real do servidor.
+        if (Platform.OS === 'web') {
+          if (window.confirm(mensagem)) void executarPublicacao(true);
+        } else {
+          Alert.alert('Conflitos ou pendências', mensagem, [
+            { text: 'Voltar e revisar', style: 'cancel' },
+            { text: 'Publicar mesmo assim', onPress: () => void executarPublicacao(true) },
+          ]);
+        }
+      }
     };
 
+    const aviso = 'Publicar os eventos planejados na Agenda geral? Os possíveis conflitos serão conferidos pelo servidor antes da publicação.';
     if (Platform.OS === 'web') {
-      const confirmar = window.confirm(mensagemAviso);
-
-      if (confirmar) {
-        executarPublicacao();
-      }
-
+      if (window.confirm(aviso)) void executarPublicacao();
       return;
     }
 
-    Alert.alert('Publicar na Agenda', mensagemAviso, [
-      {
-        text: 'Revisar Eventos',
-        style: 'cancel',
-      },
-      {
-        text: 'Publicar Assim Mesmo',
-        onPress: executarPublicacao,
-      },
+    Alert.alert('Publicar na Agenda', aviso, [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Verificar e publicar', onPress: () => void executarPublicacao() },
     ]);
   };
 
