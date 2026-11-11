@@ -140,7 +140,9 @@ export default function TelaEditarEvento() {
           ]);
         }
       } else {
-        Alert.alert("Erro", dados.erro || "Não foi possível atualizar o evento.");
+        const avisoErro = dados.erro || "Não foi possível atualizar o evento.";
+        if (Platform.OS === "web") window.alert(avisoErro);
+        else Alert.alert("Erro", avisoErro);
       }
     } catch {
       Alert.alert("Erro de Conexão", "Não foi possível conectar ao servidor.");
