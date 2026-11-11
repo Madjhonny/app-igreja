@@ -307,7 +307,7 @@ export default function TelaEventos() {
         const dados = await resp.json().catch(() => ({}));
         throw new Error(dados.erro || 'Não foi possível excluir o comentário.');
       }
-      setRespostaPara(atual => atual && removidos.has(Number(atual.id)) ? null : atual);
+      setRespostaPara((atual: any) => atual && removidos.has(Number(atual.id)) ? null : atual);
       setComentariosCurtidas(atuais => {
         const atualizadas = { ...atuais };
         removidos.forEach(itemId => { delete atualizadas[itemId]; });
