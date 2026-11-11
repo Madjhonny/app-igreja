@@ -1,6 +1,7 @@
+import { useAppAlert } from '@/components/app-dialog';
 import { apiFetch, saveSession } from '@/services/session';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal, FlatList, Image, KeyboardAvoidingView, Platform } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, FlatList, Image, KeyboardAvoidingView, Platform } from 'react-native';
 import type { TextInputInstance } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,6 +20,7 @@ const cores = {
 };
 
 export default function TelaRegistro() {
+  const Alert = useAppAlert();
   // === ESTADOS DOS CAMPOS ===
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
