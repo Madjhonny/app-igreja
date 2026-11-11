@@ -1,4 +1,4 @@
-import { useAppAlert } from '@/components/app-dialog';
+import { useAppDialog } from '@/components/app-dialog';
 import { apiFetch, authenticatedFetch } from '@/services/session';
 import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, FlatList } from 'react-native';
@@ -24,7 +24,7 @@ function formatarDataBanco(data: Date) {
 }
 
 export default function TelaEditarEvento() {
-  const Alert = useAppAlert();
+  const { alert: mostrarDialogo } = useAppDialog();
   // Recebe os dados que vieram da tela de Agenda
   const params = useLocalSearchParams(); 
   
@@ -62,7 +62,7 @@ export default function TelaEditarEvento() {
         const dados = await resposta.json();
         if (ativo && resposta.ok && Array.isArray(dados)) setListaCongregacoes(dados);
       } catch {
-        if (ativo) Alert.alert('Erro', 'Não foi possível carregar as congregações.');
+        if (ativo) mostrarDialogo('Erro', 'Não foi possível carregar as congregações.');
       }
     });
     return () => { ativo = false; };
@@ -96,7 +96,7 @@ export default function TelaEditarEvento() {
   // === FUNÇÃO PARA SALVAR (ATUALIZAR) ===
   const salvarEdicao = async (confirmarConflito = false) => {
     if (!eventoId || !titulo.trim() || !congregacaoId) {
-      Alert.alert("Atenção", "Por favor, preencha o título e selecione a congregação.");
+      mostrarDialogo("Atenção", "Por favor, preencha o título e selecione a congregação.");
       return;
     }
 
@@ -126,7 +126,7 @@ export default function TelaEditarEvento() {
 
       const dados = await resposta.json().catch(() => ({}));
       if (resposta.ok) {
-        Alert.alert("Sucesso!", "Evento atualizado com sucesso.", [
+        mostrarDialogo("Sucesso!", "Evento atualizado com sucesso.", [
           { text: "Voltar à agenda", onPress: () => router.back() },
         ]); 
       } else if (resposta.status === 409 && dados.codigo === 'CONFLITO_AGENDA' && dados.podeConfirmar) {
@@ -134,16 +134,16 @@ export default function TelaEditarEvento() {
           .map((ev: any) => '• ' + ev.titulo).join('\n');
         const aviso = 'Há eventos da mesma congregação neste horário:\n' + encontrados +
           '\n\nDeseja salvar a alteração mesmo assim?';
-        Alert.alert('Conflito de agenda', aviso, [
+        mostrarDialogo('Conflito de agenda', aviso, [
           { text: 'Voltar e revisar', style: 'cancel' },
           { text: 'Salvar mesmo assim', onPress: () => void salvarEdicao(true) },
         ]);
       } else {
         const avisoErro = dados.erro || "Não foi possível atualizar o evento.";
-        Alert.alert("Erro", avisoErro);
+        mostrarDialogo("Erro", avisoErro);
       }
     } catch {
-      Alert.alert("Erro de Conexão", "Não foi possível conectar ao servidor.");
+      mostrarDialogo("Erro de Conexão", "Não foi possível conectar ao servidor.");
     } finally {
       setCarregando(false);
     }
@@ -151,7 +151,7 @@ export default function TelaEditarEvento() {
 
   // === FUNÇÃO PARA EXCLUIR ===
   const confirmarExclusao = () => {
-    Alert.alert("Excluir Evento", "Tem certeza que deseja apagar este evento da agenda?", [
+    mostrarDialogo("Excluir Evento", "Tem certeza que deseja apagar este evento da agenda?", [
       { text: "Cancelar", style: "cancel" },
       { text: "Excluir", style: "destructive", onPress: excluirEvento }
     ]);
@@ -164,14 +164,14 @@ export default function TelaEditarEvento() {
       const resposta = await authenticatedFetch(`/eventos/${encodeURIComponent(eventoId)}`, { method: 'DELETE' });
 
       if (resposta.ok) {
-        Alert.alert("Excluído", "O evento foi apagado.", [
+        mostrarDialogo("Excluído", "O evento foi apagado.", [
           { text: "Voltar à agenda", onPress: () => router.back() },
         ]); 
       } else {
-        Alert.alert("Erro", "Não foi possível excluir o evento.");
+        mostrarDialogo("Erro", "Não foi possível excluir o evento.");
       }
     } catch {
-      Alert.alert("Erro de Conexão", "Não foi possível conectar ao servidor.");
+      mostrarDialogo("Erro de Conexão", "Não foi possível conectar ao servidor.");
     } finally {
       setCarregando(false);
     }
