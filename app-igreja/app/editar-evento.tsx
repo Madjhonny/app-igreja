@@ -1,6 +1,6 @@
 import { apiFetch, authenticatedFetch } from '@/services/session';
 import React, { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal, FlatList } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal, FlatList, Platform } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
@@ -92,7 +92,7 @@ export default function TelaEditarEvento() {
   const textoHoraVisivel = dataEvento.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
   // === FUNÇÃO PARA SALVAR (ATUALIZAR) ===
-  const salvarEdicao = async () => {
+  const salvarEdicao = async (confirmarConflito = false) => {
     if (!eventoId || !titulo.trim() || !congregacaoId) {
       Alert.alert("Atenção", "Por favor, preencha o título e selecione a congregação.");
       return;
@@ -118,6 +118,7 @@ export default function TelaEditarEvento() {
           horario: horarioDB,
           congregacao_id: Number(congregacaoId),
           legenda: primeiroParametro(params.legenda) || '',
+          confirmar_conflito: confirmarConflito,
         })
       });
 
@@ -125,6 +126,19 @@ export default function TelaEditarEvento() {
       if (resposta.ok) {
         Alert.alert("Sucesso!", "Evento atualizado com sucesso.");
         router.back(); 
+      } else if (resposta.status === 409 && dados.codigo === 'CONFLITO_AGENDA' && dados.podeConfirmar) {
+        const encontrados = (dados.eventosConflitantes || []).slice(0, 3)
+          .map((ev: any) => '• ' + ev.titulo).join('\n');
+        const aviso = 'Há eventos da mesma congregação neste horário:\n' + encontrados +
+          '\n\nDeseja salvar a alteração mesmo assim?';
+        if (Platform.OS === 'web') {
+          if (window.confirm(aviso)) void salvarEdicao(true);
+        } else {
+          Alert.alert('Conflito de agenda', aviso, [
+            { text: 'Voltar e revisar', style: 'cancel' },
+            { text: 'Salvar mesmo assim', onPress: () => void salvarEdicao(true) },
+          ]);
+        }
       } else {
         Alert.alert("Erro", dados.erro || "Não foi possível atualizar o evento.");
       }
@@ -205,7 +219,7 @@ export default function TelaEditarEvento() {
 
         <TouchableOpacity 
           style={[styles.saveButton, carregando && styles.buttonDisabled]} 
-          onPress={salvarEdicao}
+          onPress={() => void salvarEdicao()}
           disabled={carregando}
         >
           {carregando ? <ActivityIndicator color="#F7F5EC" /> : <Text style={styles.saveButtonText}>ATUALIZAR EVENTO</Text>}
