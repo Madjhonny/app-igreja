@@ -1,4 +1,4 @@
-import { useAppAlert } from '@/components/app-dialog';
+import { useAppDialog } from '@/components/app-dialog';
 import { authenticatedFetch, canManage, getStoredUser } from '@/services/session';
 import { useSessionUser } from '@/hooks/use-session-user';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -129,7 +129,7 @@ const PaginaMes = React.memo(function PaginaMes({ ano, mes, eventos, largura, es
 });
 
 export default function TelaAgenda() {
-  const Alert = useAppAlert();
+  const { alert: mostrarDialogo } = useAppDialog();
   const [usuario, setUsuario] = useSessionUser();
   const [mesAtual, setMesAtual] = useState(new Date().getMonth());
   const [anoAtual, setAnoAtual] = useState(new Date().getFullYear());
@@ -292,7 +292,7 @@ export default function TelaAgenda() {
   };
 
   const confirmarExclusao = (eventoId: number) => {
-    Alert.alert(
+    mostrarDialogo(
       "Excluir Evento",
       "Tem certeza que deseja excluir este evento?",
       [
@@ -309,13 +309,13 @@ export default function TelaAgenda() {
       if (resposta.ok) {
         setModalDetalhesVisivel(false);
         void buscarEventosDoMes(mesAtual + 1, anoAtual);
-        Alert.alert("Sucesso", "Evento excluído com sucesso!");
+        mostrarDialogo("Sucesso", "Evento excluído com sucesso!");
       } else {
         const dados = await resposta.json();
-        Alert.alert("Erro", dados.erro || "Não foi possível excluir o evento.");
+        mostrarDialogo("Erro", dados.erro || "Não foi possível excluir o evento.");
       }
     } catch {
-      Alert.alert("Erro", "Falha de conexão com o servidor.");
+      mostrarDialogo("Erro", "Falha de conexão com o servidor.");
     }
   };
 
