@@ -141,6 +141,10 @@ test('publicação detecta conflitos novos com eventos publicados', async () => 
   assert.equal(res.code, 409);
   assert.equal(res.data.resumo.sobreposicoesEncontradas, 1);
   assert.equal(res.data.conflitos[0].origem, 'AGENDA PUBLICADA');
+  assert.equal(res.data.conflitos[0].data_inicio, '2026-11-15');
+  assert.equal(res.data.conflitos[0].horario, '19:30');
+  assert.equal(res.data.conflitos[0].evento_conflitante_data_inicio, '2026-11-15');
+  assert.equal(res.data.conflitos[0].evento_conflitante_horario, '19:30');
   assert.equal(db.inserts, 0);
 });
 
