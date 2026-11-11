@@ -1,7 +1,8 @@
+import { useAppAlert } from '@/components/app-dialog';
 import { authenticatedFetch, canManage, getStoredUser } from '@/services/session';
 import { useSessionUser } from '@/hooks/use-session-user';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, Modal, Alert, ActivityIndicator, Animated, Easing, Dimensions } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, Modal, ActivityIndicator, Animated, Easing, Dimensions } from 'react-native';
 import type { GestureResponderEvent } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -128,6 +129,7 @@ const PaginaMes = React.memo(function PaginaMes({ ano, mes, eventos, largura, es
 });
 
 export default function TelaAgenda() {
+  const Alert = useAppAlert();
   const [usuario, setUsuario] = useSessionUser();
   const [mesAtual, setMesAtual] = useState(new Date().getMonth());
   const [anoAtual, setAnoAtual] = useState(new Date().getFullYear());
