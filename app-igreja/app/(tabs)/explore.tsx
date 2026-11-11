@@ -1,7 +1,8 @@
+import { useAppAlert } from '@/components/app-dialog';
 import { authenticatedFetch, canInteract, canManage, refreshSession } from '@/services/session';
 import { useSessionUser } from '@/hooks/use-session-user';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, TextInput, Modal, Alert, ActivityIndicator, Dimensions, FlatList, RefreshControl, StatusBar, BackHandler, PixelRatio } from 'react-native';
+import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, TextInput, Modal, ActivityIndicator, Dimensions, FlatList, RefreshControl, StatusBar, BackHandler, PixelRatio } from 'react-native';
 import { router, useFocusEffect, useNavigation } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -44,6 +45,7 @@ const ImagemFeed = React.memo(function ImagemFeed({ postId, uri }: { postId: num
 });
 
 export default function TelaEventos() {
+  const Alert = useAppAlert();
   const [posts, setPosts] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
