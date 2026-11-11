@@ -1,4 +1,4 @@
-import { useAppAlert } from '@/components/app-dialog';
+import { useAppDialog } from '@/components/app-dialog';
 import { authenticatedFetch, getStoredUser, storeSessionUser } from '@/services/session';
 import React, { useCallback, useState, useEffect } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Image } from 'react-native';
@@ -7,7 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 
 export default function TelaEditarPerfil() {
-  const Alert = useAppAlert();
+  const { alert: mostrarDialogo } = useAppDialog();
   const [nomeExibicao, setNomeExibicao] = useState('');
   const [bio, setBio] = useState('');
   const [foto, setFoto] = useState<string | null>(null);
@@ -22,7 +22,7 @@ export default function TelaEditarPerfil() {
         setFoto(usuario.foto_perfil || null);
       }
     } catch {
-      Alert.alert('Erro', 'Não foi possível carregar seu perfil.');
+      mostrarDialogo('Erro', 'Não foi possível carregar seu perfil.');
     }
   }, []);
 
@@ -33,7 +33,7 @@ export default function TelaEditarPerfil() {
   const escolherFoto = async () => {
     const permissao = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permissao.granted) {
-      Alert.alert('Permissão negada', 'Precisamos de acesso à galeria para alterar a foto.');
+      mostrarDialogo('Permissão negada', 'Precisamos de acesso à galeria para alterar a foto.');
       return;
     }
 
@@ -50,12 +50,12 @@ export default function TelaEditarPerfil() {
       if (asset.base64) {
         const tamanhoAproximado = Math.ceil(asset.base64.length * 0.75);
         if (tamanhoAproximado > 1_500_000) {
-          Alert.alert('Imagem muito grande', 'Escolha uma imagem de até 1,5 MB.');
+          mostrarDialogo('Imagem muito grande', 'Escolha uma imagem de até 1,5 MB.');
           return;
         }
         setFoto(`data:image/jpeg;base64,${asset.base64}`);
       } else {
-        Alert.alert('Imagem inválida', 'Não foi possível preparar a imagem para envio.');
+        mostrarDialogo('Imagem inválida', 'Não foi possível preparar a imagem para envio.');
       }
     }
   };
@@ -67,7 +67,7 @@ export default function TelaEditarPerfil() {
   const salvarPerfil = async () => {
     const nomeLimpo = nomeExibicao.trim();
     if (nomeLimpo.length < 2 || nomeLimpo.length > 80 || bio.trim().length > 500) {
-      Alert.alert('Atenção', 'Use um nome entre 2 e 80 caracteres e uma biografia de até 500 caracteres.');
+      mostrarDialogo('Atenção', 'Use um nome entre 2 e 80 caracteres e uma biografia de até 500 caracteres.');
       return;
     }
     setCarregando(true);
@@ -88,14 +88,14 @@ export default function TelaEditarPerfil() {
 
       if (resposta.ok) {
         await storeSessionUser(dados.usuario);
-        Alert.alert('Sucesso', 'Perfil atualizado com sucesso!', [
+        mostrarDialogo('Sucesso', 'Perfil atualizado com sucesso!', [
           { text: 'OK', onPress: () => router.back() }
         ]);
       } else {
-        Alert.alert('Erro', dados.erro || 'Não foi possível atualizar o perfil.');
+        mostrarDialogo('Erro', dados.erro || 'Não foi possível atualizar o perfil.');
       }
     } catch {
-      Alert.alert('Erro', 'Falha de conexão com o servidor.');
+      mostrarDialogo('Erro', 'Falha de conexão com o servidor.');
     } finally {
       setCarregando(false);
     }
