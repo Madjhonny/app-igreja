@@ -286,11 +286,65 @@ test('IDs inválidos são rejeitados antes de consultar posts, comentários ou p
     ['get', '/mural/:id/comentarios'],
     ['get', '/usuarios/:id/perfil-publico'],
   ]) {
-    for (const id of ['invalido', '0', '-1', '1.5']) {
+    for (const id of ['invalido', '0', '-1', '1.5', '1e3', '1.0', '+2', ' 2', '2 ', '0x10', '2147483648', '02']) {
       const s = setup(master);
       const response = await s.call(method, url, {}, 'Bearer valid', id);
       assert.equal(response.code, 400, `${method} ${url} id=${id}`);
       assert.equal(s.queries.length, 1, `${method} ${url} não deve consultar recursos com ID inválido`);
     }
+  }
+});
+
+test('IDs de rota com formato inválido não alcançam operações privilegiadas', async () => {
+  const master = { id: 1, nivel_acesso: 'MASTER', status_conta: 'APROVADO', congregacao_id: null };
+  const rotas = [
+    ['delete', '/eventos/:id', {}],
+    ['delete', '/comentarios/:id', {}],
+    ['put', '/usuarios/:id/status', { status_conta: 'PENDENTE' }],
+    ['put', '/usuarios/:id/nivel', { nivel_acesso: 'MEMBRO' }],
+    ['put', '/usuarios/:id/congregacao', { congregacao_id: 10 }],
+  ];
+  for (const [method, url, body] of rotas) {
+    for (const id of ['1e3', '1.0', '+2', '2147483648']) {
+      const s = setup(master);
+      const resposta = await s.call(method, url, body, 'Bearer valid', id);
+      assert.equal(resposta.code, 400, `${method} ${url} id=${id}`);
+      assert.equal(s.queries.length, 1, 'nenhuma operação adicional deve chegar ao banco');
+    }
+  }
+});
+
+test('IDs inválidos no corpo são rejeitados antes de consultar congregações ou criar eventos', async () => {
+  const master = { id: 1, nivel_acesso: 'MASTER', status_conta: 'APROVADO', congregacao_id: null };
+  for (const id of ['1e3', '1.0', '2147483648', true, [2], {}, 2147483648]) {
+    const s = setup(master);
+    const resposta = await s.call('put', '/usuarios/:id/congregacao', { congregacao_id: id });
+    assert.equal(resposta.code, 400, `alterar congregação com ${JSON.stringify(id)}`);
+    assert.equal(s.queries.length, 1, 'não deve consultar congregações com ID inválido');
+
+    const t = setup(master);
+    const evento = {
+      titulo: 'Programação teste', data_inicio: '2026-11-15', data_fim: '2026-11-15',
+      horario: '19:30', congregacao_id: id,
+    };
+    const retorno = await t.call('post', '/eventos', evento);
+    assert.equal(retorno.code, 400, `criar evento com ${JSON.stringify(id)}`);
+    assert.equal(t.queries.length, 1, 'não deve abrir transação com congregação inválida');
+  }
+});
+
+test('IDs inteiros legítimos continuam aceitos no corpo e nas rotas', async () => {
+  const master = { id: 1, nivel_acesso: 'MASTER', status_conta: 'APROVADO', congregacao_id: null };
+  const s = setup(master);
+  const leitura = await s.call('get', '/usuarios/:id/perfil-publico', {}, 'Bearer valid', '2');
+  assert.equal(leitura.code, 200);
+  assert.equal(s.queries.length, 2);
+
+  for (const id of [2, '2']) {
+    const t = setup(master);
+    const resposta = await t.call('put', '/usuarios/:id/congregacao', { congregacao_id: id });
+    // Com ID válido a consulta avança ao banco simulado e não acha congregação: 404, não 400.
+    assert.equal(resposta.code, 404);
+    assert.equal(t.queries.length, 2);
   }
 });
