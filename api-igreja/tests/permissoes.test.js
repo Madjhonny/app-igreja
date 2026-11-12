@@ -278,3 +278,19 @@ test('Approved ADMIN cannot approve accounts outside its permitted scope', async
     assert.equal(response.code,404);
   }
 });
+
+test('IDs inválidos são rejeitados antes de consultar posts, comentários ou perfis públicos', async () => {
+  const master = { id: 1, nivel_acesso: 'MASTER', status_conta: 'APROVADO', congregacao_id: null };
+  for (const [method, url] of [
+    ['delete', '/mural/:id'],
+    ['get', '/mural/:id/comentarios'],
+    ['get', '/usuarios/:id/perfil-publico'],
+  ]) {
+    for (const id of ['invalido', '0', '-1', '1.5']) {
+      const s = setup(master);
+      const response = await s.call(method, url, {}, 'Bearer valid', id);
+      assert.equal(response.code, 400, `${method} ${url} id=${id}`);
+      assert.equal(s.queries.length, 1, `${method} ${url} não deve consultar recursos com ID inválido`);
+    }
+  }
+});
