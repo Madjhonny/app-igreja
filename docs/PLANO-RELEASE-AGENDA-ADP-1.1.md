@@ -81,6 +81,32 @@ A API já suporta `RESEND_API_KEY` e `EMAIL_FROM`.
 - Esta captura não executou migração, deploy, mudança de credenciais nem substituiu dados da produção.
 - **Antes de migrar:** conferir novamente existência e prazo de retenção do snapshot; preparar procedimento de restauração, sem restaurar sobre `production` automaticamente. Preferir testar restauração numa branch isolada caso autorizado.
 
+## Conferência segura das variáveis Render — etapa atual
+
+O conector Render disponível nesta revisão permite consultar serviço e deploy, mas **não ler os valores de Environment Variables**. A conferência final é manual, no dashboard do serviço **app-igreja → Environment**. **Não editar, salvar ou revelar os valores.**
+
+### Comparação de `DB_HOST` (dados não secretos do Neon)
+
+- Host da branch Neon `production`: `ep-odd-cloud-b6vjrv0e.c-2.sa-east-1.aws.neon.tech`
+- Host da branch Neon `homologacao-senhas-1-1`: `ep-solitary-sunset-b6xgs4o4.c-2.sa-east-1.aws.neon.tech`
+- Hosts opcionais com `-pooler` antes de `.c-2.` são variações do mesmo endpoint; conferir a identidade do prefixo `ep-odd-cloud-b6vjrv0e` para produção.
+- Estado do Neon `production` confirmado novamente: somente migrations `001` e `002`, sem `usuarios.token_version` e sem tabela `senha_recuperacoes`.
+- Snapshot manual `snap-long-truth-b6gxqftq` verificado como existente na lista. O retorno não apresentou data de expiração; isso **não comprova retenção ilimitada**.
+
+### Variáveis a conferir no Render (somente valores de presença ou configuração, sem segredos)
+
+- [ ] `DB_HOST`: comparar visualmente com o host de **production** acima, sem publicar captura com senhas ou outras variáveis.
+- [ ] `DB_NAME`: `neondb`; `DB_PORT`: `5432`; `DB_SSL`: `true`.
+- [ ] `DB_USER`, `DB_PASSWORD`: apenas verificar que estão configurados, sem copiar/expor valores.
+- [ ] `JWT_SECRET`: apenas verificar presença e preservar o segredo atual. Modificá-lo desconectaria sessões.
+- [ ] `CORS_ORIGINS`: conferir que os domínios Web previstos estão cadastrados; não alterar sem revisar impacto.
+- [ ] `RESEND_API_KEY`, `EMAIL_FROM`: para demonstração sem domínio, remetente de testes restrito ao e-mail autorizado da conta Resend. Se ausentes, recuperação de senha no Render ficará indisponível; nenhuma chave deve ir para o frontend.
+- [ ] Verificar se existe `DATABASE_URL` ou variável duplicada de conexão e, caso exista, confirmar se é efetivamente usada; o `server.js` atual usa `DB_USER`, `DB_HOST`, `DB_NAME`, `DB_PASSWORD`, `DB_PORT`, `DB_SSL`.
+- [ ] Verificar se há variáveis em *Environment Groups* vinculados que possam colidir com as do serviço.
+- [ ] **Não clicar em Save/Deploy** nessa etapa. A documentação Render esclarece que salvar alterações pode iniciar deploy ou afetar um deploy futuro.
+
+**Limite da validação:** a identidade da conexão em execução no Render só estará confirmada após essa verificação manual, não apenas pela leitura do host no Neon.
+
 ## Sequência proposta para implantação futura (não executada)
 
 1. Congelar commit de release e conferir logs/CI.
