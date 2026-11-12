@@ -132,9 +132,17 @@ O conector Render disponível nesta revisão permite consultar serviço e deploy
 - **Ação manual sugerida:** em Render → serviço `app-igreja` → Environment, adicionar `RESEND_API_KEY` (segredo copiado diretamente da conta Resend) e `EMAIL_FROM=Agenda ADP <onboarding@resend.dev>`. Não revelar a API key no chat, no GitHub ou no frontend.
 - Escolher **Save only** ao salvar. Render documenta que isso salva a variável **sem iniciar deploy**; a configuração passa a vigorar no próximo deploy. Não selecionar Save and deploy nesta etapa.
 - Testes reais de e-mail com o backend hospedado só podem ocorrer após autorização específica para publicar a nova API. O remetente de demonstração não é uma solução para lançamento oficial.
-- Verificar a numeração da versão: `app.json` ainda declara `1.0.0`; o EAS usa `appVersionSource: remote`. Definir `1.1.0` e versão/código Android de maneira consistente antes de gerar a nova build, sem publicar APK neste momento.
-- [ ] Usuário confirmar que as duas variáveis foram configuradas no Render com Save only, sem compartilhar valores.
+- Numeração da release definida como **`1.1.0`** em `app-igreja/app.json`, `app-igreja/package.json`, `app-igreja/package-lock.json`, `api-igreja/package.json` e `api-igreja/package-lock.json`. O EAS usa `appVersionSource: remote`: confirmar o `versionCode` remoto Android antes de gerar novo APK, sem publicar nesta etapa.
+- [x] Usuário confirmou que `RESEND_API_KEY` e `EMAIL_FROM` foram configuradas no Render com **Save only**, sem compartilhar valores. Entrega real na API hospedada ainda precisa de teste após o deploy.
 - [ ] Usuário autorizar separadamente o merge/deploy da versão 1.1 no Render após checklist final.
+
+## Etapa preparada — credenciais de demonstração e versões alinhadas
+
+- Usuário relatou ter salvo `RESEND_API_KEY` e `EMAIL_FROM` via **Save only** no Render. A ferramenta de integração não permite inspecionar valores de segredos; portanto não foi feita auditoria do conteúdo e **não houve envio de e-mail de teste pelo backend hospedado**.
+- O serviço Render permanece vinculado a `main`, com auto-deploy habilitado. Não houve solicitação nem execução de deploy.
+- Versão `1.1.0` alinhada nos manifestos do Expo, Node do app/API e em seus lockfiles. `versionCode` do Android no EAS continua gerenciado remotamente e não foi modificado.
+- O remetente de testes serve exclusivamente à demonstração interna e não à distribuição para e-mails de terceiros.
+- **Próxima decisão:** depois do CI verde do commit candidato, obter autorização específica para fazer merge do PR consolidado em `main`, que dispara automaticamente deploy da API. Antes disso, confirmar janela de testes e conta dedicada; não mexer no banco novamente.
 
 ## Sequência proposta para implantação futura (não executada)
 
