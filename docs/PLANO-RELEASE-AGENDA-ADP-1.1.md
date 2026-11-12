@@ -50,7 +50,7 @@ A API já suporta `RESEND_API_KEY` e `EMAIL_FROM`.
 - [ ] Testar agenda: criação, edição e exclusão, filtros, rolagem entre meses; Gestão de Datas/publicação e conflitos, inclusive autorização MASTER.
 - [ ] Testar Eventos: criar post de teste, feed, fullscreen, carrossel vertical, imagem, comentários e curtidas, exclusão de comentário e post.
 - [ ] Testar senha: alterar, recuperar via e-mail autorizado, login com senha nova, senha antiga e código reaproveitado rejeitados.
-- [ ] Revisar configurações Render: workspace escolhido pelo responsável, serviço correto, branch de deploy, auto-deploy, start/build commands, variáveis e logs. Não alterar nada nesta revisão.
+- [x] Revisar serviço Render, branch, auto-deploy, start/build commands e deploy atualmente ativo (somente leitura). Variáveis de ambiente continuam pendentes de conferência manual segura, sem divulgar valores.
 - [ ] Confirmar qual API está embutida na build Web/Android (`EXPO_PUBLIC_API_URL`); builds de demonstração devem apontar ao backend planejado.
 - [ ] Fazer backup/snapshot verificável da `production` no Neon e registrar plano de recuperação.
 - [ ] Antes do deploy da API: aplicar migration `003` **na branch de produção**, somente após autorização e conferir aplicação.
@@ -58,6 +58,19 @@ A API já suporta `RESEND_API_KEY` e `EMAIL_FROM`.
 - [ ] Conferir início do servidor, login e GET /mural em produção após deploy da API; aplicar smoke test com contas estritamente de teste.
 - [ ] Implantar versão Web e gerar nova build Android quando o backend estiver pronto, sem distribuição pública antes da autorização.
 - [ ] Confirmar versões `app.json`, distribuição e estratégia de rollback antes do anúncio.
+
+## Revisão Render confirmada em 12/11/2026 (somente leitura)
+
+- Workspace autorizado: `My Workspace`.
+- Serviço: `app-igreja`, ID `srv-dboiqge417fc738d4d5g`, URL `https://app-igreja-eks0.onrender.com`.
+- Repositório: `https://github.com/Madjhonny/app-igreja`.
+- Branch vinculada: `main`; **auto-deploy ativado ao receber commits**. Mergir o PR de release em `main` pode acionar imediatamente nova implantação da API.
+- Diretório raiz do serviço: `api-igreja/`; build `npm install`, start `npm start`.
+- Serviço Node, plano Free, região Virginia, uma instância; previews de PR desativadas e sem health check configurado.
+- Deploy ativo antes da versão 1.1: commit `444970e13469883eb4b34db5ae149c9b26859c05` da `main`, status `live`.
+- **Controle obrigatório:** NÃO fazer merge do PR #11 antes da migração `003` na branch `production` do Neon, com backup e autorização explícita. Avaliar desativar o auto-deploy enquanto o plano é executado, ou programar a migração antes de efetuar o merge.
+- Credenciais e variáveis do serviço **não foram lidas nem alteradas** nesta verificação; em especial conferir `DB_*`, `JWT_SECRET`, `CORS_ORIGINS`, e remetente de e-mail de demonstração em canal privado.
+- Nenhum deploy, reinício, mudança de serviço ou banco foi realizado.
 
 ## Sequência proposta para implantação futura (não executada)
 
