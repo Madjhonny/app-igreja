@@ -905,6 +905,28 @@ app.put('/usuarios/perfil', verificarToken, async (req, res) => {
 // === ROTAS DO MURAL DE EVENTOS ===
 // ========================================================
 
+// Links temporários assinados permitem que a Web e o Android carreguem fotos
+// separadamente do JSON, sem expor o JWT do usuário a componentes de imagem.
+// O endpoint legado continua intacto para versões anteriores do aplicativo.
+const DURACAO_LINK_IMAGEM_S = 12 * 60 * 60;
+const CACHE_IMAGEM_S = 30 * 60;
+const assinaturaImagem = (id, expira) =>
+  crypto.createHmac('sha256', JWT_SECRET).update(`mural-imagem:${id}:${expira}`).digest('hex');
+const criarLinkImagem = id => {
+  // Mantém a URL estável dentro da hora para aproveitar o cache dos clientes.
+  const expira = (Math.floor(Date.now() / 3_600_000) * 3600) + DURACAO_LINK_IMAGEM_S;
+  return `/mural/${id}/imagem?exp=${expira}&sig=${assinaturaImagem(id, expira)}`;
+};
+const assinaturaImagemValida = (id, expira, assinatura) => {
+  if (!idValido(id) || typeof expira !== 'string' || !/^\\d{10}$/.test(expira) ||
+      typeof assinatura !== 'string' || !/^[a-f0-9]{64}$/.test(assinatura)) return false;
+  const agora = Math.floor(Date.now() / 1000);
+  const vencimento = Number(expira);
+  if (vencimento <= agora || vencimento > agora + DURACAO_LINK_IMAGEM_S) return false;
+  const esperado = assinaturaImagem(id, expira);
+  return crypto.timingSafeEqual(Buffer.from(assinatura, 'hex'), Buffer.from(esperado, 'hex'));
+};
+
 app.post('/mural', verificarToken, somenteGestores, async (req, res) => {
   try {
     const { titulo, descricao, local, tipo_midia, midia, data_inicio, data_fim } = req.body;
@@ -947,18 +969,28 @@ app.post('/mural', verificarToken, somenteGestores, async (req, res) => {
 app.get('/mural', verificarToken, async (req, res) => {
   try {
     const usuario_atual_id = req.usuario.id;
+    const modoLeve = req.query.midia === 'link';
+
+    // No modo leve o PostgreSQL não devolve Base64 no SELECT.
+    // A forma antiga da resposta permanece disponível para clientes instalados.
+    const campoMidia = modoLeve
+      ? `CASE WHEN LEFT(m.midia, 5) = 'data:' THEN NULL ELSE m.midia END AS midia,
+         (LEFT(m.midia, 5) = 'data:') AS midia_embutida`
+      : 'm.midia';
 
     const query = `
-      SELECT m.*, COALESCE(u.nome_exibicao, u.nome_completo) as autor, u.foto_perfil as autor_foto,
+      SELECT m.id, m.usuario_id, m.congregacao_id, m.titulo, m.descricao,
+        m.local, m.tipo_midia, m.data_inicio, m.data_fim, ${campoMidia},
+        COALESCE(u.nome_exibicao, u.nome_completo) as autor, u.foto_perfil as autor_foto,
         (SELECT COUNT(*) FROM mural_curtidas mc WHERE mc.post_id = m.id) as total_curtidas,
         EXISTS (SELECT 1 FROM mural_curtidas mc WHERE mc.post_id = m.id AND mc.usuario_id = $1) as curtiu_por_mim
       FROM mural_eventos m
       JOIN usuarios u ON m.usuario_id = u.id
       WHERE m.data_fim >= CURRENT_DATE
-      ORDER BY m.data_inicio ASC, m.criado_em DESC;
+      ORDER BY m.data_inicio ASC, m.criado_em DESC, m.id DESC;
     `;
     const resultado = await pool.query(query, [usuario_atual_id]);
-    
+
     const posts = resultado.rows.map(post => ({
       id: post.id,
       usuario_id: post.usuario_id,
@@ -969,7 +1001,7 @@ app.get('/mural', verificarToken, async (req, res) => {
       descricao: post.descricao,
       local: post.local,
       tipo: post.tipo_midia,
-      midia: post.midia,
+      midia: modoLeve && post.midia_embutida ? criarLinkImagem(post.id) : post.midia,
       totalCurtidas: parseInt(post.total_curtidas) || 0,
       curtiuPorMim: post.curtiu_por_mim,
       dataInicio: post.data_inicio,
@@ -977,10 +1009,47 @@ app.get('/mural', verificarToken, async (req, res) => {
       comentarios: []
     }));
 
+    // Evita cache do JSON personalizado com curtidas, usuário e links de imagem.
+    res.set('Cache-Control', 'private, no-store');
     res.json(posts);
   } catch (erro) {
     console.error("Erro ao buscar mural:", erro);
     res.status(500).json({ erro: "Erro interno ao buscar o mural." });
+  }
+});
+
+// A URL só é emitida após uma consulta autenticada ao mural e expira em até 12h.
+// Link válido concede leitura apenas da foto específica; nunca dá acesso à sessão.
+app.get('/mural/:id/imagem', async (req, res) => {
+  const id = req.params.id;
+  if (!assinaturaImagemValida(id, req.query.exp, req.query.sig)) {
+    return res.status(403).json({ erro: 'Link de imagem inválido ou expirado.' });
+  }
+  try {
+    const resultado = await pool.query(
+      'SELECT tipo_midia, midia FROM mural_eventos WHERE id = $1 AND data_fim >= CURRENT_DATE',
+      [Number(id)]
+    );
+    if (!resultado.rowCount) return res.status(404).json({ erro: 'Imagem não encontrada.' });
+
+    const { tipo_midia, midia } = resultado.rows[0];
+    if (tipo_midia !== 'imagem' || typeof midia !== 'string') {
+      return res.status(404).json({ erro: 'Imagem não encontrada.' });
+    }
+    const match = IMAGE_RE.exec(midia);
+    if (!match || !imagemValida(midia)) {
+      return res.status(404).json({ erro: 'Imagem não encontrada.' });
+    }
+    const mime = `image/${match[1]}`;
+    const buffer = Buffer.from(match[2], 'base64');
+    res.set('Content-Type', mime);
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Cache-Control', `private, max-age=${CACHE_IMAGEM_S}`);
+    res.set('Content-Length', String(buffer.byteLength));
+    return res.send(buffer);
+  } catch (erro) {
+    console.error('Erro ao carregar imagem do mural:', erro);
+    return res.status(500).json({ erro: 'Erro ao carregar imagem.' });
   }
 });
 
