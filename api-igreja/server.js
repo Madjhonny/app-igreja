@@ -1058,6 +1058,8 @@ app.delete('/mural/:id', verificarToken, somenteGestores, async (req, res) => {
     const post_id = req.params.id;
     const { nivel_acesso, congregacao_id } = req.usuario;
 
+    if (!idValido(post_id)) return res.status(400).json({ erro: 'Post inválido.' });
+
     const postResult = await pool.query('SELECT * FROM mural_eventos WHERE id = $1', [post_id]);
     if (postResult.rowCount === 0) {
       return res.status(404).json({ erro: "Post não encontrado." });
@@ -1109,6 +1111,8 @@ app.get('/mural/:id/comentarios', verificarToken, async (req, res) => {
   try {
     const post_id = req.params.id;
     const usuario_atual_id = req.usuario.id;
+
+    if (!idValido(post_id)) return res.status(400).json({ erro: 'Post inválido.' });
 
     const query = `
       SELECT 
@@ -1242,6 +1246,7 @@ app.delete('/comentarios/:id', verificarToken, verificarAprovacao, async (req, r
 app.get('/usuarios/:id/perfil-publico', verificarToken, async (req, res) => {
   try {
     const usuario_alvo_id = req.params.id;
+    if (!idValido(usuario_alvo_id)) return res.status(400).json({ erro: 'Usuário inválido.' });
     const query = `
       SELECT id, COALESCE(nome_exibicao, nome_completo) as nome_exibicao, foto_perfil, bio 
       FROM usuarios 
