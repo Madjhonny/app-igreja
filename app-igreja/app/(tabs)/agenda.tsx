@@ -1,7 +1,7 @@
 import { apiFetch, authenticatedFetch, canManage, getStoredUser } from '@/services/session';
 import { useSessionUser } from '@/hooks/use-session-user';
 import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, Modal, ActivityIndicator, Animated, Easing, Dimensions } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, Modal, ActivityIndicator, Animated, Easing, Dimensions, Platform } from 'react-native';
 import type { GestureResponderEvent } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -262,7 +262,7 @@ export default function TelaAgenda() {
       toValue: valor,
       duration: duracao,
       easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
     }).start();
   }, [trilhoX]);
 
