@@ -28,7 +28,7 @@ O Agenda ADP organiza **eventos únicos**, com duração de um ou mais dias, e o
 | Filtro por congregação na agenda | Selecionar uma congregação ou todas; filtrar atividades e marcações do calendário, preservando navegação de meses | **Homologada pelo usuário na Web e Android** (PR #8) |
 | Padronização dos cabeçalhos | Aba Agenda com título `Agenda`; aba Eventos com título `Eventos`, ambos centralizados, sem ocultar ação de nova postagem | **Implementada no PR #9; funcionamento confirmado pelo usuário** |
 | Transições entre as abas principais | Agenda ↔ Eventos ↔ Perfil com deslizamento horizontal bidirecional, barra inferior com indicador e ícones animados em sincronia, preservando navegação e estilos | **Homologada pelo usuário na Web e no Android (PR #9)** |
-| Otimização de imagens do mural (fase 1) | Listagem leve e fotos servidas separadamente sob demanda, sem alterar imagens existentes | Implementada no PR #10; homologação Web/Android pendente |
+| Otimização de imagens do mural (fase 1) | Listagem leve e fotos servidas separadamente sob demanda, sem alterar imagens existentes | **Homologada na Web e no Android (PR #10)** |
 | Refatoração modular | Separar responsabilidades de telas extensas e rotas da API sem mudar comportamento | Planejada |
 
 ### P2 — Versões seguintes
@@ -161,7 +161,7 @@ Não realizar merge diretamente na `main` antes de fechar a homologação dos P0
 - `GET /mural/:id/imagem` atende fotos JPEG/PNG/WebP diretamente em resposta binária com cache privado de 30 minutos; link válido é restrito a uma foto e vence automaticamente.
 - O frontend usa `apiUrl` para URLs relativas e continua aceitando data URIs e URLs HTTPS legadas.
 - Não houve migração nem transformação em lote dos registros no Neon. Sem novo serviço de armazenamento ou custo adicional contratado.
-- Pendente: testes funcionais na Web/Android e avaliação posterior de armazenamento externo.
+- Testes funcionais da Web e do Android confirmados pelo usuário; pendentes apenas medições quantitativas de desempenho e avaliação posterior de armazenamento externo.
 
 ### Correções de homologação visual (Web)
 
@@ -170,4 +170,5 @@ Não realizar merge diretamente na `main` antes de fechar a homologação dos P0
 - Removida, somente na Web, a espera obrigatória pelo `onLayout` antes de montar o `FlatList` do fullscreen; a dimensão inicial da janela serve como fallback.
 - Animação de troca de mês na Agenda usa o driver JavaScript no navegador e o driver nativo no Android, evitando o aviso de `useNativeDriver`.
 - **Homologação Web informada pelo usuário:** proporção das imagens corrigida, abertura em tela cheia funcionando e carrossel vertical funcionando; curtidas e comentários também haviam sido confirmados.
-- **Homologação Android pendente:** repetir exibição do mural, fullscreen, rolagem vertical, curtidas, comentários e retorno à aba anterior. CI não substitui estes testes visuais.
+- **Homologação Android confirmada pelo usuário:** exibição do mural, imagens, abertura de fullscreen, carrossel vertical, curtidas, comentários e retorno funcionando no Android, conforme roteiro apresentado.
+- **Etapa 1 homologada na Web e no Android.** Os testes automatizados do CI também passaram; medições quantitativas de economia de banda e migração para armazenamento externo permanecem etapas separadas.
