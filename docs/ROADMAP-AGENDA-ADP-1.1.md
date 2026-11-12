@@ -28,7 +28,7 @@ O Agenda ADP organiza **eventos únicos**, com duração de um ou mais dias, e o
 | Filtro por congregação na agenda | Selecionar uma congregação ou todas; filtrar atividades e marcações do calendário, preservando navegação de meses | **Homologada pelo usuário na Web e Android** (PR #8) |
 | Padronização dos cabeçalhos | Aba Agenda com título `Agenda`; aba Eventos com título `Eventos`, ambos centralizados, sem ocultar ação de nova postagem | **Implementada no PR #9; funcionamento confirmado pelo usuário** |
 | Transições entre as abas principais | Agenda ↔ Eventos ↔ Perfil com deslizamento horizontal bidirecional, barra inferior com indicador e ícones animados em sincronia, preservando navegação e estilos | **Homologada pelo usuário na Web e no Android (PR #9)** |
-| Otimização e armazenamento de imagens | Reduzir payload do mural e preservar desempenho | Planejada |
+| Otimização de imagens do mural (fase 1) | Listagem leve e fotos servidas separadamente sob demanda, sem alterar imagens existentes | Implementada no PR #10; homologação Web/Android pendente |
 | Refatoração modular | Separar responsabilidades de telas extensas e rotas da API sem mudar comportamento | Planejada |
 
 ### P2 — Versões seguintes
@@ -144,7 +144,7 @@ Não realizar merge diretamente na `main` antes de fechar a homologação dos P0
 - Etapa 7: `feat/transicoes-abas-headers-11` (PR #9, baseada no PR #8).
 - Não realizar merge nem deploy em produção sem homologação do usuário.
 
-## Próxima etapa planejada — desempenho e armazenamento de imagens do mural (P1)
+## Desempenho e armazenamento de imagens do mural (P1)
 
 - Analisar como as fotos são recebidas, armazenadas e devolvidas na API, inclusive limites de tamanho e formato.
 - Evitar payloads grandes, sem quebrar publicações e imagens já existentes.
@@ -152,3 +152,13 @@ Não realizar merge diretamente na `main` antes de fechar a homologação dos P0
 - Avaliar armazenamento externo com acesso controlado e estratégia de migração, com custo e segurança adequados.
 - Medir impactos em carregamento, memória, transferência e responsividade antes/depois.
 - Trabalhar em branch e PR separados com CI e testes manuais, sem alterar Neon/Render de produção automaticamente.
+
+
+### Entrega — imagens sob demanda (fase 1)
+
+- Branch: `feat/mural-imagens-sob-demanda-11`, baseada na branch homologada do PR #9.
+- `GET /mural?midia=link` retorna metadados e links assinados temporários (12h); formato legado continua disponível para versões antigas.
+- `GET /mural/:id/imagem` atende fotos JPEG/PNG/WebP diretamente em resposta binária com cache privado de 30 minutos; link válido é restrito a uma foto e vence automaticamente.
+- O frontend usa `apiUrl` para URLs relativas e continua aceitando data URIs e URLs HTTPS legadas.
+- Não houve migração nem transformação em lote dos registros no Neon. Sem novo serviço de armazenamento ou custo adicional contratado.
+- Pendente: testes funcionais na Web/Android e avaliação posterior de armazenamento externo.
