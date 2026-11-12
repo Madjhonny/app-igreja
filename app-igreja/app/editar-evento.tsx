@@ -66,7 +66,7 @@ export default function TelaEditarEvento() {
       }
     });
     return () => { ativo = false; };
-  }, []);
+  }, [mostrarDialogo]);
 
   // === FUNÇÕES DO CALENDÁRIO E RELÓGIO ===
   const aoMudarData = (event: any, dataSelecionada?: Date) => {
