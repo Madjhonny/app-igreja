@@ -6,6 +6,12 @@ import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator
 import { router, useFocusEffect, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
+// Retorna ao Perfil se não existir histórico de navegação (ex.: Ctrl+R no Web).
+const voltarParaPerfil = () => {
+  if (router.canGoBack()) router.back();
+  else router.replace('/perfil');
+};
+
 export default function TelaGestaoUsuarios() {
   const { alert: mostrarDialogo } = useAppDialog();
   const [usuarios, setUsuarios] = useState<any[]>([]);
@@ -33,7 +39,7 @@ export default function TelaGestaoUsuarios() {
           }
         }
       } else {
-        router.back();
+        voltarParaPerfil();
       }
     } catch {
       mostrarDialogo('Erro', 'Falha na conexão com o servidor.');
@@ -80,7 +86,7 @@ export default function TelaGestaoUsuarios() {
       <Stack.Screen options={{ headerShown: false }} />
 
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity onPress={voltarParaPerfil} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#F7F5EC" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Gestão de Contas</Text>
