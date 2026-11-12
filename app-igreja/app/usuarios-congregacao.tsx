@@ -6,6 +6,12 @@ import { StyleSheet, Text, View, FlatList, TouchableOpacity, ActivityIndicator, 
 import { router, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
+// No acesso direto ou após atualizar o navegador, usa Gestão de Contas como destino seguro.
+const voltarParaGestaoDeContas = () => {
+  if (router.canGoBack()) router.back();
+  else router.replace('/gestao-usuarios');
+};
+
 export default function TelaUsuariosCongregacao() {
   const { alert: mostrarDialogo } = useAppDialog();
   const { congregacaoNome } = useLocalSearchParams();
@@ -41,7 +47,7 @@ export default function TelaUsuariosCongregacao() {
         const filtrados = todosUsuarios.filter((u: any) => u.congregacao === congregacaoNome);
         setUsuarios(filtrados);
       } else {
-        router.back();
+        voltarParaGestaoDeContas();
       }
     } catch {
       mostrarDialogo('Erro', 'Falha na conexão com o servidor.');
@@ -138,7 +144,7 @@ export default function TelaUsuariosCongregacao() {
       <Stack.Screen options={{ headerShown: false }} />
 
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity onPress={voltarParaGestaoDeContas} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#F7F5EC" />
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>
