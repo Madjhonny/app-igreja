@@ -40,7 +40,7 @@ export default function TelaGestaoUsuarios() {
     } finally {
       setCarregando(false);
     }
-  }, [setUsuarioLogado]);
+  }, [setUsuarioLogado, mostrarDialogo]);
 
   useFocusEffect(useCallback(() => {
     void carregarDados();

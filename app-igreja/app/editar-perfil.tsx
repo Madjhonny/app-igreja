@@ -24,7 +24,7 @@ export default function TelaEditarPerfil() {
     } catch {
       mostrarDialogo('Erro', 'Não foi possível carregar seu perfil.');
     }
-  }, []);
+  }, [mostrarDialogo]);
 
   useEffect(() => {
     void Promise.resolve().then(carregarDadosIniciais);

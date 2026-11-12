@@ -57,7 +57,7 @@ export default function TelaCriarEvento() {
     } catch {
       mostrarDialogo('Erro', 'Não foi possível carregar os dados para criar o evento.');
     }
-  }, [setUsuario]);
+  }, [setUsuario, mostrarDialogo]);
 
   useEffect(() => {
     void Promise.resolve().then(carregarDadosIniciais);

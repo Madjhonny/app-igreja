@@ -48,7 +48,7 @@ export default function TelaUsuariosCongregacao() {
     } finally {
       setCarregando(false);
     }
-  }, [congregacaoNome, setUsuarioLogado]);
+  }, [congregacaoNome, setUsuarioLogado, mostrarDialogo]);
 
   useFocusEffect(useCallback(() => {
     void carregarDadosIniciais();

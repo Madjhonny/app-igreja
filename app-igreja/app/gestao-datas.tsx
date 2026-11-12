@@ -162,7 +162,7 @@ export default function TelaGestaoDatas() {
   // CARREGAR DADOS
   // =====================================================
 
-  const carregarDados = async () => {
+  const carregarDados = useCallback(async () => {
     const revisaoAoIniciar = revisaoLocalRef.current;
     // O spinner de tela inteira só aparece no carregamento inicial.
     if (!dadosCarregadosRef.current) setCarregando(true);
@@ -203,12 +203,12 @@ export default function TelaGestaoDatas() {
     } finally {
       setCarregando(false);
     }
-  };
+  }, [mostrarDialogo]);
 
   useFocusEffect(
     useCallback(() => {
-      carregarDados();
-    }, [])
+      void carregarDados();
+    }, [carregarDados])
   );
 
   // =====================================================
