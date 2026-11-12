@@ -103,7 +103,12 @@ const MAX_IMAGE_BYTES = Number(process.env.MAX_IMAGE_BYTES || 2_000_000);
 
 const textoValido = (value, min, max) =>
   typeof value === 'string' && value.trim().length >= min && value.trim().length <= max;
-const idValido = value => Number.isSafeInteger(Number(value)) && Number(value) > 0;
+// Chaves primárias PostgreSQL SERIAL usam inteiros positivos de 32 bits.
+// Evita coerção implícita de booleanos, arrays, exponenciais e valores fora do limite.
+const idValido = value => {
+  if (typeof value === 'number') return Number.isInteger(value) && value > 0 && value <= 2147483647;
+  return typeof value === 'string' && /^[1-9]\d*$/.test(value) && Number(value) <= 2147483647;
+};
 const dataValida = value => {
   if (typeof value !== 'string' || !DATA_RE.test(value)) return false;
   const [ano, mes, dia] = value.split('-').map(Number);
