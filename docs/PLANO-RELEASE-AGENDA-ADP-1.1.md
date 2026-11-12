@@ -95,17 +95,22 @@ O conector Render disponível nesta revisão permite consultar serviço e deploy
 
 ### Variáveis a conferir no Render (somente valores de presença ou configuração, sem segredos)
 
-- [ ] `DB_HOST`: comparar visualmente com o host de **production** acima, sem publicar captura com senhas ou outras variáveis.
-- [ ] `DB_NAME`: `neondb`; `DB_PORT`: `5432`; `DB_SSL`: `true`.
-- [ ] `DB_USER`, `DB_PASSWORD`: apenas verificar que estão configurados, sem copiar/expor valores.
-- [ ] `JWT_SECRET`: apenas verificar presença e preservar o segredo atual. Modificá-lo desconectaria sessões.
-- [ ] `CORS_ORIGINS`: conferir que os domínios Web previstos estão cadastrados; não alterar sem revisar impacto.
-- [ ] `RESEND_API_KEY`, `EMAIL_FROM`: para demonstração sem domínio, remetente de testes restrito ao e-mail autorizado da conta Resend. Se ausentes, recuperação de senha no Render ficará indisponível; nenhuma chave deve ir para o frontend.
+- [x] `DB_HOST`: usuário mostrou no painel Render que corresponde ao host de **production** acima; sem divulgar credenciais.
+- [x] `DB_NAME`: `neondb` e `DB_SSL`: `true` confirmados visualmente; `DB_PORT` configurado, mas valor oculto — **ainda conferir 5432**.
+- [x] `DB_USER` e `DB_PASSWORD`: ambas aparecem configuradas com valores protegidos; sem conferir conteúdo.
+- [x] `JWT_SECRET`: presença confirmada, valor preservado. Modificá-lo desconectaria sessões.
+- [ ] `CORS_ORIGINS`: presença confirmada; ainda conferir localmente os domínios Web previstos, sem divulgar configurações sensíveis.
+- [ ] `RESEND_API_KEY`, `EMAIL_FROM`: não aparecem na lista de variáveis exibida no painel Render. Verificar existência de grupo de ambiente vinculado; se ausentes, recuperação de senha no Render ficará indisponível, embora esteja funcional localmente. Para demonstração sem domínio, usar remetente de testes apenas com e-mail autorizado.
 - [ ] Verificar se existe `DATABASE_URL` ou variável duplicada de conexão e, caso exista, confirmar se é efetivamente usada; o `server.js` atual usa `DB_USER`, `DB_HOST`, `DB_NAME`, `DB_PASSWORD`, `DB_PORT`, `DB_SSL`.
 - [ ] Verificar se há variáveis em *Environment Groups* vinculados que possam colidir com as do serviço.
 - [ ] **Não clicar em Save/Deploy** nessa etapa. A documentação Render esclarece que salvar alterações pode iniciar deploy ou afetar um deploy futuro.
 
 **Limite da validação:** a identidade da conexão em execução no Render só estará confirmada após essa verificação manual, não apenas pela leitura do host no Neon.
+
+### Verificação de painel recebida do usuário (12/11/2026)
+
+- Captura do ambiente **Environment** do Render confirmou: host de `production` do Neon, banco `neondb`, SSL habilitado e presença das variáveis principais. O valor de `DB_PORT` e os valores sensíveis permanecem ocultos; nenhuma captura de segredo foi armazenada no repositório.
+- Não houve mudança de configuração, execução de SQL, deploy nem merge. A migração `003` permanece **pendente de autorização específica**.
 
 ## Sequência proposta para implantação futura (não executada)
 
