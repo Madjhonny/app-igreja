@@ -4,7 +4,7 @@
     "slug": "app-igreja",
     "version": "1.1.0",
     "orientation": "portrait",
-    "icon": "./assets/images/logo.jpg",
+    "icon": "./assets/images/logo.png",
     "scheme": "appigreja",
     "userInterfaceStyle": "automatic",
     "ios": {
@@ -15,7 +15,7 @@
       "package": "br.com.agendaadp.app",
       "adaptiveIcon": {
         "backgroundColor": "#2F5558",
-        "foregroundImage": "./assets/images/logo.jpg"
+        "foregroundImage": "./assets/images/logo.png"
       },
       "predictiveBackGestureEnabled": false
     },
@@ -40,7 +40,8 @@
       "@react-native-community/datetimepicker",
       "expo-image",
       "expo-secure-store",
-      "expo-web-browser"
+      "expo-web-browser",
+      "expo-status-bar"
     ],
     "experiments": {
       "typedRoutes": true,
