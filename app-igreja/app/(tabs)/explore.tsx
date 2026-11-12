@@ -1,12 +1,16 @@
-import { authenticatedFetch, canInteract, canManage, refreshSession } from '@/services/session';
+import { useAppDialog } from '@/components/app-dialog';
+import { apiUrl, authenticatedFetch, canInteract, canManage, refreshSession } from '@/services/session';
 import { useSessionUser } from '@/hooks/use-session-user';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, TextInput, Modal, Alert, ActivityIndicator, Dimensions, FlatList, RefreshControl, StatusBar, BackHandler, PixelRatio } from 'react-native';
+import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, TextInput, Modal, ActivityIndicator, Dimensions, FlatList, RefreshControl, StatusBar, BackHandler, PixelRatio, Platform } from 'react-native';
 import { router, useFocusEffect, useNavigation } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 // Altura da janela usada apenas como valor inicial; no fullscreen a altura real é medida via onLayout
 const { height } = Dimensions.get('window');
+
+// Compatibilidade com URLs temporárias relativas da API e imagens antigas em Data URI.
+const origemImagem = (valor: string) => valor.startsWith('/') ? apiUrl(valor) : valor;
 
 // Guarda a proporção (altura / largura) real de cada imagem já carregada.
 // Assim, ao rolar o feed e a célula ser recriada, ela já nasce com a altura correta (sem "pulo").
@@ -44,6 +48,7 @@ const ImagemFeed = React.memo(function ImagemFeed({ postId, uri }: { postId: num
 });
 
 export default function TelaEventos() {
+  const { alert: mostrarDialogo } = useAppDialog();
   const [posts, setPosts] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -60,6 +65,8 @@ export default function TelaEventos() {
   // Medidas reais da área do fullscreen (cada slide ocupa exatamente uma "página")
   const [alturaPagina, setAlturaPagina] = useState(height);
   const [fullscreenMedido, setFullscreenMedido] = useState(false);
+  // Na Web, o onLayout inicial pode não disparar quando a camada é absoluta.
+  // A lista já pode usar a altura inicial da janela sem aguardar essa medição.
   // Índice do slide visível (usado como ponto de partida ao abrir e se a lista precisar ser recriada)
   const indiceAtualRef = useRef(0);
 
@@ -69,6 +76,11 @@ export default function TelaEventos() {
   const [comentarios, setComentarios] = useState<any[]>([]);
   const [textoComentario, setTextoComentario] = useState('');
   const [respostaPara, setRespostaPara] = useState<any>(null);
+  const [comentarioParaExcluir, setComentarioParaExcluir] = useState<any>(null);
+  const [excluindoComentario, setExcluindoComentario] = useState(false);
+  const [erroComentario, setErroComentario] = useState('');
+  const [avisoComentario, setAvisoComentario] = useState('');
+  const excluindoComentarioRef = useRef(false);
 
   // Estados para curtidas
   const [postsCurtidas, setPostsCurtidas] = useState<{ [key: number]: { total: number, curtiu: boolean } }>({});
@@ -102,7 +114,7 @@ export default function TelaEventos() {
     if (!isRefresh) setCarregando(true);
     setErroCarregamento('');
     try {
-      const resposta = await authenticatedFetch('/mural');
+      const resposta = await authenticatedFetch('/mural?midia=link');
       if (resposta.ok) {
         const dados = await resposta.json();
         setPosts(dados);
@@ -164,7 +176,7 @@ export default function TelaEventos() {
       if (!resposta.ok) throw new Error('LIKE_FAILED');
     } catch {
       setPostsCurtidas(prev => ({ ...prev, [postId]: anterior }));
-      Alert.alert('Não foi possível curtir', 'Tente novamente em alguns instantes.');
+      mostrarDialogo('Não foi possível curtir', 'Tente novamente em alguns instantes.');
     }
   };
 
@@ -187,14 +199,32 @@ export default function TelaEventos() {
       if (!resposta.ok) throw new Error('LIKE_FAILED');
     } catch {
       setComentariosCurtidas(prev => ({ ...prev, [comentarioId]: anterior }));
-      Alert.alert('Não foi possível curtir', 'Tente novamente em alguns instantes.');
+      mostrarDialogo('Não foi possível curtir', 'Tente novamente em alguns instantes.');
     }
   };
 
   const abrirComentarios = async (postId: number) => {
     setPostSelecionadoId(postId);
+    setComentarioParaExcluir(null);
+    setErroComentario('');
+    setAvisoComentario('');
     setModalComentariosVisivel(true);
     await carregarComentarios(postId);
+  };
+
+  const fecharComentarios = () => {
+    if (excluindoComentarioRef.current) return;
+    setModalComentariosVisivel(false);
+    setComentarioParaExcluir(null);
+    setErroComentario('');
+    setAvisoComentario('');
+  };
+
+  const podeExcluirComentario = (comentario: any) => {
+    if (!podeInteragir || !usuarioLogado) return false;
+    return Number(comentario.usuario_id) === Number(usuarioLogado.id) ||
+      usuarioLogado.nivel_acesso === 'ADMIN' ||
+      usuarioLogado.nivel_acesso === 'MASTER';
   };
 
   const carregarComentarios = async (postId: number) => {
@@ -211,10 +241,10 @@ export default function TelaEventos() {
         setComentariosCurtidas(mapC);
       } else {
         const dados = await resp.json().catch(() => ({}));
-        Alert.alert('Erro', dados.erro || 'Não foi possível carregar os comentários.');
+        mostrarDialogo('Erro', dados.erro || 'Não foi possível carregar os comentários.');
       }
     } catch {
-      Alert.alert('Erro', 'Falha de conexão ao carregar os comentários.');
+      mostrarDialogo('Erro', 'Falha de conexão ao carregar os comentários.');
     }
   };
 
@@ -237,15 +267,69 @@ export default function TelaEventos() {
         await carregarComentarios(postSelecionadoId);
       } else {
         const dados = await resp.json().catch(() => ({}));
-        Alert.alert('Erro', dados.erro || 'Não foi possível enviar o comentário.');
+        mostrarDialogo('Erro', dados.erro || 'Não foi possível enviar o comentário.');
       }
     } catch {
-      Alert.alert("Erro", "Não foi possível enviar o comentário.");
+      mostrarDialogo("Erro", "Não foi possível enviar o comentário.");
+    }
+  };
+
+  const iniciarExclusaoComentario = (comentario: any) => {
+    if (!podeExcluirComentario(comentario) || excluindoComentarioRef.current) return;
+    setErroComentario('');
+    setAvisoComentario('');
+    setComentarioParaExcluir(comentario);
+  };
+
+  const excluirComentario = async () => {
+    if (!comentarioParaExcluir || !podeExcluirComentario(comentarioParaExcluir) || excluindoComentarioRef.current) return;
+
+    const id = Number(comentarioParaExcluir.id);
+    const anteriores = comentarios;
+    // A FK de comentários remove também respostas descendentes. Atualiza a UI com a mesma regra.
+    const removidos = new Set<number>([id]);
+    let encontrou = true;
+    while (encontrou) {
+      encontrou = false;
+      for (const item of anteriores) {
+        if (item.parent_id != null && removidos.has(Number(item.parent_id)) &&
+            !removidos.has(Number(item.id))) {
+          removidos.add(Number(item.id));
+          encontrou = true;
+        }
+      }
+    }
+
+    excluindoComentarioRef.current = true;
+    setExcluindoComentario(true);
+    setErroComentario('');
+    setComentarios(atuais => atuais.filter(item => !removidos.has(Number(item.id))));
+    setComentarioParaExcluir(null);
+
+    try {
+      const resp = await authenticatedFetch(`/comentarios/${id}`, { method: 'DELETE' });
+      if (!resp.ok) {
+        const dados = await resp.json().catch(() => ({}));
+        throw new Error(dados.erro || 'Não foi possível excluir o comentário.');
+      }
+      setRespostaPara((atual: any) => atual && removidos.has(Number(atual.id)) ? null : atual);
+      setComentariosCurtidas(atuais => {
+        const atualizadas = { ...atuais };
+        removidos.forEach(itemId => { delete atualizadas[itemId]; });
+        return atualizadas;
+      });
+      setAvisoComentario('Comentário excluído com sucesso.');
+    } catch (erro) {
+      setComentarios(anteriores);
+      setErroComentario(erro instanceof Error ? erro.message : 'Falha de conexão ao excluir o comentário.');
+    } finally {
+      excluindoComentarioRef.current = false;
+      setExcluindoComentario(false);
     }
   };
 
   const excluirPost = async (postId: number) => {
-    Alert.alert("Excluir Publicação", "Tem certeza que deseja excluir este post?", [
+    mostrarDialogo("Excluir Publicação", "Tem certeza que deseja excluir este post?", [
       { text: "Cancelar", style: "cancel" },
       {
         text: "Excluir",
@@ -257,10 +341,10 @@ export default function TelaEventos() {
               setPosts(posts.filter(p => p.id !== postId));
               if (posts.length <= 1) setModoFullscreen(false);
             } else {
-              Alert.alert("Erro", "Você não tem permissão para excluir este post.");
+              mostrarDialogo("Erro", "Você não tem permissão para excluir este post.");
             }
           } catch {
-            Alert.alert("Erro", "Falha na conexão.");
+            mostrarDialogo("Erro", "Falha na conexão.");
           }
         }
       }
@@ -286,7 +370,7 @@ export default function TelaEventos() {
     const autorFoto = post.autor_foto;
 
     return (
-      <TouchableOpacity style={styles.postCard} activeOpacity={0.95} onPress={() => abrirFullscreenNoPost(index)}>
+      <TouchableOpacity style={[styles.postCard, Platform.OS === 'web' && styles.postCardWeb]} activeOpacity={0.95} onPress={() => abrirFullscreenNoPost(index)}>
         <View style={styles.postHeader}>
           <TouchableOpacity 
             style={styles.authorContainer} 
@@ -326,7 +410,7 @@ export default function TelaEventos() {
               </View>
             </View>
           ) : (
-            <ImagemFeed postId={post.id} uri={post.midia} />
+            <ImagemFeed postId={post.id} uri={origemImagem(post.midia)} />
           )
         ) : null}
 
@@ -363,7 +447,7 @@ export default function TelaEventos() {
                 <Text style={styles.videoTextLarge}>Vídeo indisponível nesta versão</Text>
               </View>
             ) : (
-              <Image source={{ uri: post.midia }} style={styles.fullscreenImage} resizeMode="contain" />
+              <Image source={{ uri: origemImagem(post.midia) }} style={styles.fullscreenImage} resizeMode="contain" />
             )
           ) : (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 }}>
@@ -427,7 +511,7 @@ export default function TelaEventos() {
         }}
       >
         <StatusBar hidden={true} />
-        {fullscreenMedido && (
+        {(Platform.OS === 'web' || fullscreenMedido) && (
           <FlatList
             key={`fullscreen-${alturaPagina}`}
             ref={flatListRef}
@@ -462,17 +546,57 @@ export default function TelaEventos() {
         )}
 
         {/* MODAL DE COMENTÁRIOS NO MODO FULLSCREEN */}
-        <Modal visible={modalComentariosVisivel} animationType="slide" transparent={true} onRequestClose={() => setModalComentariosVisivel(false)}>
+        <Modal visible={modalComentariosVisivel} animationType="slide" transparent={true} onRequestClose={fecharComentarios}>
           <View style={styles.modalOverlay}>
             <View style={styles.modalContent}>
               <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>Comentários</Text>
-                <TouchableOpacity onPress={() => setModalComentariosVisivel(false)}>
+                <Text style={styles.modalTitle}>{comentarioParaExcluir ? 'Excluir comentário' : 'Comentários'}</Text>
+                <TouchableOpacity onPress={fecharComentarios}>
                   <Ionicons name="close" size={24} color="#333" />
                 </TouchableOpacity>
               </View>
 
-              <ScrollView style={{ maxHeight: 320, marginBottom: 15 }}>
+              {comentarioParaExcluir ? (
+                <View style={styles.confirmacaoComentario}>
+                  <View style={styles.confirmacaoComentarioIcone}>
+                    <Ionicons name="trash-outline" size={25} color="#D84343" />
+                  </View>
+                  <Text style={styles.confirmacaoComentarioTitulo}>Excluir este comentário?</Text>
+                  <Text style={styles.confirmacaoComentarioAutor}>{comentarioParaExcluir.autor}</Text>
+                  <Text style={styles.confirmacaoComentarioTrecho} numberOfLines={3}>{comentarioParaExcluir.texto}</Text>
+                  <Text style={styles.confirmacaoComentarioAviso}>
+                    As respostas a este comentário também serão removidas.
+                  </Text>
+                  <View style={styles.confirmacaoComentarioAcoes}>
+                    <TouchableOpacity
+                      style={styles.cancelarExclusaoComentario}
+                      onPress={() => setComentarioParaExcluir(null)}
+                      disabled={excluindoComentario}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.cancelarExclusaoComentarioTexto}>Cancelar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.confirmarExclusaoComentario, excluindoComentario && { opacity: 0.6 }]}
+                      onPress={() => void excluirComentario()}
+                      disabled={excluindoComentario}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.confirmarExclusaoComentarioTexto}>
+                        {excluindoComentario ? 'Excluindo...' : 'Excluir'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <>
+                  {erroComentario ? (
+                    <Text accessibilityRole="alert" style={styles.erroComentario}>{erroComentario}</Text>
+                  ) : null}
+                  {avisoComentario ? (
+                    <Text accessibilityRole="alert" style={styles.avisoComentario}>{avisoComentario}</Text>
+                  ) : null}
+                  <ScrollView style={{ maxHeight: 320, marginBottom: 15 }}>
                 {comentarios.length === 0 ? (
                   <Text style={styles.emptyComentarios}>{podeInteragir ? 'Nenhum comentário ainda. Seja o primeiro a comentar!' : 'Nenhum comentário disponível.'}</Text>
                 ) : (
@@ -490,9 +614,19 @@ export default function TelaEventos() {
                         </View>
                         <Text style={styles.comentarioTexto}>{c.texto}</Text>
                         
-                        {podeInteragir && <TouchableOpacity onPress={() => setRespostaPara(c)} style={{marginTop: 4}}>
-                          <Text style={styles.responderText}>Responder</Text>
-                        </TouchableOpacity>}
+                        <View style={styles.comentarioAcoes}>
+                          {podeInteragir && <TouchableOpacity onPress={() => setRespostaPara(c)} disabled={excluindoComentario} accessibilityRole="button">
+                            <Text style={styles.responderText}>Responder</Text>
+                          </TouchableOpacity>}
+                          {podeExcluirComentario(c) && <TouchableOpacity
+                            onPress={() => iniciarExclusaoComentario(c)}
+                            disabled={excluindoComentario}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Excluir comentário de ${c.autor}`}
+                          >
+                            <Text style={styles.excluirComentarioText}>Excluir</Text>
+                          </TouchableOpacity>}
+                        </View>
                       </View>
                     );
                   })
@@ -520,6 +654,8 @@ export default function TelaEventos() {
                   <Ionicons name="send" size={18} color="#fff" />
                 </TouchableOpacity>
               </View>}
+                </>
+              )}
             </View>
           </View>
         </Modal>
@@ -530,11 +666,15 @@ export default function TelaEventos() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Eventos da Igreja</Text>
-        {usuarioLogado && canManage(usuarioLogado) && (
+        {/* Espaços simétricos preservam o título centralizado com ou sem botão de criar post. */}
+        <View style={styles.headerSideSlot} />
+        <Text style={styles.headerTitle}>Eventos</Text>
+        {usuarioLogado && canManage(usuarioLogado) ? (
           <TouchableOpacity onPress={() => router.push('/criar-post' as any)} style={styles.newPostBtn}>
             <Ionicons name="add" size={24} color="#fff" />
           </TouchableOpacity>
+        ) : (
+          <View style={styles.headerSideSlot} />
         )}
       </View>
 
@@ -566,17 +706,57 @@ export default function TelaEventos() {
       )}
 
       {/* MODAL DE COMENTÁRIOS NO FEED NORMAL */}
-      <Modal visible={modalComentariosVisivel} animationType="slide" transparent={true} onRequestClose={() => setModalComentariosVisivel(false)}>
+      <Modal visible={modalComentariosVisivel} animationType="slide" transparent={true} onRequestClose={fecharComentarios}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Comentários</Text>
-              <TouchableOpacity onPress={() => setModalComentariosVisivel(false)}>
+              <Text style={styles.modalTitle}>{comentarioParaExcluir ? 'Excluir comentário' : 'Comentários'}</Text>
+              <TouchableOpacity onPress={fecharComentarios}>
                 <Ionicons name="close" size={24} color="#333" />
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ maxHeight: 320, marginBottom: 15 }}>
+            {comentarioParaExcluir ? (
+                <View style={styles.confirmacaoComentario}>
+                  <View style={styles.confirmacaoComentarioIcone}>
+                    <Ionicons name="trash-outline" size={25} color="#D84343" />
+                  </View>
+                  <Text style={styles.confirmacaoComentarioTitulo}>Excluir este comentário?</Text>
+                  <Text style={styles.confirmacaoComentarioAutor}>{comentarioParaExcluir.autor}</Text>
+                  <Text style={styles.confirmacaoComentarioTrecho} numberOfLines={3}>{comentarioParaExcluir.texto}</Text>
+                  <Text style={styles.confirmacaoComentarioAviso}>
+                    As respostas a este comentário também serão removidas.
+                  </Text>
+                  <View style={styles.confirmacaoComentarioAcoes}>
+                    <TouchableOpacity
+                      style={styles.cancelarExclusaoComentario}
+                      onPress={() => setComentarioParaExcluir(null)}
+                      disabled={excluindoComentario}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.cancelarExclusaoComentarioTexto}>Cancelar</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.confirmarExclusaoComentario, excluindoComentario && { opacity: 0.6 }]}
+                      onPress={() => void excluirComentario()}
+                      disabled={excluindoComentario}
+                      accessibilityRole="button"
+                    >
+                      <Text style={styles.confirmarExclusaoComentarioTexto}>
+                        {excluindoComentario ? 'Excluindo...' : 'Excluir'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ) : (
+                <>
+                  {erroComentario ? (
+                    <Text accessibilityRole="alert" style={styles.erroComentario}>{erroComentario}</Text>
+                  ) : null}
+                  {avisoComentario ? (
+                    <Text accessibilityRole="alert" style={styles.avisoComentario}>{avisoComentario}</Text>
+                  ) : null}
+                  <ScrollView style={{ maxHeight: 320, marginBottom: 15 }}>
               {comentarios.length === 0 ? (
                 <Text style={styles.emptyComentarios}>{podeInteragir ? 'Nenhum comentário ainda. Seja o primeiro a comentar!' : 'Nenhum comentário disponível.'}</Text>
               ) : (
@@ -594,9 +774,19 @@ export default function TelaEventos() {
                       </View>
                       <Text style={styles.comentarioTexto}>{c.texto}</Text>
                       
-                      {podeInteragir && <TouchableOpacity onPress={() => setRespostaPara(c)} style={{marginTop: 4}}>
-                        <Text style={styles.responderText}>Responder</Text>
-                      </TouchableOpacity>}
+                      <View style={styles.comentarioAcoes}>
+                        {podeInteragir && <TouchableOpacity onPress={() => setRespostaPara(c)} disabled={excluindoComentario} accessibilityRole="button">
+                          <Text style={styles.responderText}>Responder</Text>
+                        </TouchableOpacity>}
+                        {podeExcluirComentario(c) && <TouchableOpacity
+                          onPress={() => iniciarExclusaoComentario(c)}
+                          disabled={excluindoComentario}
+                          accessibilityRole="button"
+                          accessibilityLabel={`Excluir comentário de ${c.autor}`}
+                        >
+                          <Text style={styles.excluirComentarioText}>Excluir</Text>
+                        </TouchableOpacity>}
+                      </View>
                     </View>
                   );
                 })
@@ -624,6 +814,8 @@ export default function TelaEventos() {
                 <Ionicons name="send" size={18} color="#fff" />
               </TouchableOpacity>
             </View>}
+                </>
+              )}
           </View>
         </View>
       </Modal>
@@ -634,8 +826,9 @@ export default function TelaEventos() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F7F5EC' },
   header: { backgroundColor: '#2A4B4C', paddingTop: 50, paddingBottom: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20 },
-  headerTitle: { color: '#F7F5EC', fontSize: 20, fontWeight: 'bold' },
-  newPostBtn: { backgroundColor: '#3A6364', padding: 8, borderRadius: 20 },
+  headerTitle: { color: '#F7F5EC', fontSize: 20, fontWeight: 'bold', flex: 1, textAlign: 'center' },
+  headerSideSlot: { width: 40, height: 40 },
+  newPostBtn: { backgroundColor: '#3A6364', padding: 8, borderRadius: 20, width: 40, height: 40 },
 
   bannerNovosPosts: { backgroundColor: '#2A4B4C', paddingVertical: 10, paddingHorizontal: 15, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', elevation: 3 },
   bannerNovosPostsText: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
@@ -647,6 +840,9 @@ const styles = StyleSheet.create({
 
   // Estilos Feed Normal
   postCard: { backgroundColor: '#fff', borderRadius: 12, marginBottom: 20, overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5, elevation: 2 },
+  // No navegador o feed deve ter largura de leitura, sem esticar fotos pela tela inteira.
+  // Em celulares preservamos o layout anterior.
+  postCardWeb: { width: '100%', maxWidth: 640, alignSelf: 'center' },
   postHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12 },
   authorContainer: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   authorAvatar: { width: 40, height: 40, borderRadius: 20, marginRight: 10, borderWidth: 1, borderColor: '#2A4B4C' },
@@ -708,6 +904,21 @@ const styles = StyleSheet.create({
   comentarioAutor: { fontSize: 13, fontWeight: 'bold', color: '#2A4B4C' },
   comentarioTexto: { fontSize: 14, color: '#333', marginTop: 2 },
   responderText: { fontSize: 11, color: '#2A4B4C', fontWeight: 'bold' },
+  comentarioAcoes: { flexDirection: 'row', alignItems: 'center', gap: 20, marginTop: 7 },
+  excluirComentarioText: { fontSize: 11, fontWeight: 'bold', color: '#B83E43' },
+  erroComentario: { backgroundColor: '#FFE8E9', color: '#A22C33', padding: 10, borderRadius: 9, marginBottom: 12, fontSize: 13 },
+  avisoComentario: { backgroundColor: '#E2EAE9', color: '#2A4B4C', padding: 10, borderRadius: 9, marginBottom: 12, fontSize: 13 },
+  confirmacaoComentario: { alignItems: 'center', gap: 10, paddingVertical: 12 },
+  confirmacaoComentarioIcone: { backgroundColor: '#FFE8E9', borderRadius: 28, width: 56, height: 56, justifyContent: 'center', alignItems: 'center' },
+  confirmacaoComentarioTitulo: { fontSize: 18, fontWeight: '700', color: '#2A4B4C', textAlign: 'center' },
+  confirmacaoComentarioAutor: { fontSize: 13, fontWeight: '700', color: '#2A4B4C' },
+  confirmacaoComentarioTrecho: { fontSize: 14, textAlign: 'center', color: '#444', backgroundColor: '#F7F5EC', padding: 12, borderRadius: 9, alignSelf: 'stretch' },
+  confirmacaoComentarioAviso: { fontSize: 12, textAlign: 'center', color: '#78634D', marginBottom: 8 },
+  confirmacaoComentarioAcoes: { flexDirection: 'row', gap: 10, alignSelf: 'stretch' },
+  cancelarExclusaoComentario: { flex: 1, backgroundColor: '#E2EAE9', borderRadius: 12, minHeight: 45, alignItems: 'center', justifyContent: 'center' },
+  cancelarExclusaoComentarioTexto: { color: '#2A4B4C', fontWeight: '700' },
+  confirmarExclusaoComentario: { flex: 1, backgroundColor: '#B83E43', borderRadius: 12, minHeight: 45, alignItems: 'center', justifyContent: 'center' },
+  confirmarExclusaoComentarioTexto: { color: '#FFFFFF', fontWeight: '700' },
   respondendoBox: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#E2EAE9', padding: 6, borderRadius: 6, marginBottom: 8 },
   respondendoText: { fontSize: 12, color: '#2A4B4C' },
   comentarioInputRow: { flexDirection: 'row', alignItems: 'center' },

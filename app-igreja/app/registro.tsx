@@ -1,6 +1,7 @@
+import { useAppDialog } from '@/components/app-dialog';
 import { apiFetch, saveSession } from '@/services/session';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Modal, FlatList, Image, KeyboardAvoidingView, Platform } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, FlatList, Image, KeyboardAvoidingView, Platform } from 'react-native';
 import type { TextInputInstance } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -19,6 +20,7 @@ const cores = {
 };
 
 export default function TelaRegistro() {
+  const { alert: mostrarDialogo } = useAppDialog();
   // === ESTADOS DOS CAMPOS ===
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
@@ -82,7 +84,7 @@ export default function TelaRegistro() {
   const escolherFoto = async () => {
     const permissao = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (permissao.granted === false) {
-      Alert.alert('Permissão negada', 'Precisamos de acesso à galeria para escolher uma foto.');
+      mostrarDialogo('Permissão negada', 'Precisamos de acesso à galeria para escolher uma foto.');
       return;
     }
 
@@ -97,7 +99,7 @@ export default function TelaRegistro() {
     if (!resultado.canceled && resultado.assets[0].base64) {
       const base64 = resultado.assets[0].base64;
       if (Math.ceil(base64.length * 0.75) > 1_500_000) {
-        Alert.alert('Imagem muito grande', 'Escolha uma foto de até 1,5 MB.');
+        mostrarDialogo('Imagem muito grande', 'Escolha uma foto de até 1,5 MB.');
         return;
       }
       setFoto(`data:image/jpeg;base64,${base64}`);
@@ -147,22 +149,22 @@ export default function TelaRegistro() {
 
   const fazerCadastro = async () => {
     if (!nome || !email || !senha || !confirmarSenha || !cpf || !telefone || !congregacaoId) {
-      return Alert.alert('Atenção', 'Preencha todos os campos e selecione sua congregação.');
+      return mostrarDialogo('Atenção', 'Preencha todos os campos e selecione sua congregação.');
     }
 
     const regexEmail = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!regexEmail.test(email)) {
       setErroEmail('Formato inválido. Use exemplo@dominio.com');
-      return Alert.alert('Erro', 'Por favor, corrija o e-mail antes de continuar.');
+      return mostrarDialogo('Erro', 'Por favor, corrija o e-mail antes de continuar.');
     }
 
     if (senha !== confirmarSenha) {
       setErroSenha('As senhas não coincidem.');
-      return Alert.alert('Erro', 'As senhas não coincidem. Verifique a digitação.');
+      return mostrarDialogo('Erro', 'As senhas não coincidem. Verifique a digitação.');
     }
     if (senha.length < 10 || !/[a-z]/.test(senha) || !/[A-Z]/.test(senha) || !/\d/.test(senha)) {
       setErroSenha('Use ao menos 10 caracteres, com maiúscula, minúscula e número.');
-      return Alert.alert('Senha fraca', 'Use ao menos 10 caracteres, com maiúscula, minúscula e número.');
+      return mostrarDialogo('Senha fraca', 'Use ao menos 10 caracteres, com maiúscula, minúscula e número.');
     }
 
     setCarregando(true);
@@ -190,12 +192,12 @@ export default function TelaRegistro() {
         setErroAcessoConvidado('');
         setCadastroConcluido(true);
       } else if (!resposta.ok) {
-        Alert.alert('Erro', dados?.erro || 'Falha ao cadastrar.');
+        mostrarDialogo('Erro', dados?.erro || 'Falha ao cadastrar.');
       } else {
-        Alert.alert('Erro', 'O servidor retornou uma resposta de cadastro inválida. Tente entrar manualmente.');
+        mostrarDialogo('Erro', 'O servidor retornou uma resposta de cadastro inválida. Tente entrar manualmente.');
       }
     } catch {
-      Alert.alert('Erro de Conexão', 'Não foi possível conectar ao servidor.');
+      mostrarDialogo('Erro de Conexão', 'Não foi possível conectar ao servidor.');
     } finally {
       setCarregando(false);
     }

@@ -3,6 +3,7 @@ const cors = require('cors');
 const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('node:crypto');
 const { rateLimit } = require('express-rate-limit');
 require('dotenv').config();
 
@@ -47,6 +48,54 @@ const cadastroLimiter = rateLimit({
 });
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const CODIGO_RE = /^\d{8}$/;
+const senhaSegura = senha => typeof senha === 'string' &&
+  senha.length >= 10 && senha.length <= 128 &&
+  /[A-Z]/.test(senha) && /[a-z]/.test(senha) && /\d/.test(senha);
+const hashCodigoSenha = (id, codigo) =>
+  crypto.createHmac('sha256', JWT_SECRET).update(`${id}:${codigo}`).digest('hex');
+const codigoCorreto = (hashEsperado, hashInformado) => {
+  if (typeof hashEsperado !== 'string' || !/^[a-f0-9]{64}$/.test(hashEsperado)) return false;
+  return crypto.timingSafeEqual(Buffer.from(hashEsperado, 'hex'), Buffer.from(hashInformado, 'hex'));
+};
+const solicitarSenhaLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  limit: Number(process.env.RESET_REQUEST_RATE_LIMIT || 5),
+  standardHeaders: 'draft-8', legacyHeaders: false,
+  message: { erro: 'Muitas solicitações. Tente novamente mais tarde.' },
+});
+const redefinirSenhaLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: Number(process.env.RESET_VERIFY_RATE_LIMIT || 10),
+  standardHeaders: 'draft-8', legacyHeaders: false,
+  message: { erro: 'Muitas tentativas. Aguarde alguns minutos.' },
+});
+const alterarSenhaLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 8, standardHeaders: 'draft-8', legacyHeaders: false,
+  message: { erro: 'Muitas tentativas de alteração. Aguarde alguns minutos.' },
+});
+const RESPOSTA_RECUPERACAO = 'Se o e-mail estiver cadastrado e apto a acessar o aplicativo, enviaremos um código de recuperação.';
+
+async function enviarCodigoRecuperacao(email, codigo) {
+  const resposta = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+      'User-Agent': 'agenda-adp/1.1',
+    },
+    body: JSON.stringify({
+      from: process.env.EMAIL_FROM,
+      to: [email],
+      subject: 'Agenda ADP - código para redefinir sua senha',
+      text: `Seu código para redefinir a senha do Agenda ADP é: ${codigo}\n\nO código expira em 15 minutos e só pode ser usado uma vez. Se você não solicitou, ignore esta mensagem.\n\nNão compartilhe esse código.`,
+    }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!resposta.ok) throw new Error('Provedor de e-mail não aceitou a solicitação.');
+}
+
 const DATA_RE = /^\d{4}-\d{2}-\d{2}$/;
 const HORA_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 const IMAGE_RE = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/]+={0,2})$/;
@@ -80,6 +129,56 @@ const validarEvento = ({ titulo, data_inicio, data_fim, horario }) => {
   }
   return null;
 };
+
+// Namespace para serializar alterações na agenda por congregação.
+// A publicação e as alterações diretas compartilham este lock transacional.
+const AGENDA_LOCK_NAMESPACE = 414441;
+
+const bloquearAgendaDaCongregacao = async (client, ids) => {
+  const ordenados = [...new Set(ids.map(Number))].sort((a, b) => a - b);
+  for (const id of ordenados) {
+    await client.query('SELECT pg_advisory_xact_lock($1, $2)', [AGENDA_LOCK_NAMESPACE, id]);
+  }
+};
+
+const minutosDoHorario = (horario) => {
+  const [horas, minutos] = String(horario).slice(0, 5).split(':').map(Number);
+  return horas * 60 + minutos;
+};
+
+const eventosSobrepostos = (primeiro, segundo) =>
+  Number(primeiro.congregacao_id) === Number(segundo.congregacao_id) &&
+  String(primeiro.data_inicio).slice(0, 10) <= String(segundo.data_fim).slice(0, 10) &&
+  String(primeiro.data_fim).slice(0, 10) >= String(segundo.data_inicio).slice(0, 10) &&
+  minutosDoHorario(primeiro.horario) < minutosDoHorario(segundo.horario) + Number(segundo.duracao_minutos || 60) &&
+  minutosDoHorario(segundo.horario) < minutosDoHorario(primeiro.horario) + Number(primeiro.duracao_minutos || 60);
+
+// Consulta compartilhada por criação e edição direta de eventos.
+// Intervalos são semiabertos: terminar às 20h não conflita com começar às 20h.
+const consultarConflitosPublicados = async (client, evento, ignorarId = null) => {
+  const resultado = await client.query(`
+    SELECT id, titulo, data_inicio::text AS data_inicio, data_fim::text AS data_fim,
+           horario::text AS horario, COALESCE(duracao_minutos, 60) AS duracao_minutos,
+           congregacao_id
+    FROM eventos
+    WHERE congregacao_id = $1
+      AND data_inicio <= $3::date AND data_fim >= $2::date
+      AND ($6::integer IS NULL OR id <> $6)
+      AND EXTRACT(EPOCH FROM horario::time) < EXTRACT(EPOCH FROM $4::time) + $5 * 60
+      AND EXTRACT(EPOCH FROM horario::time) + COALESCE(duracao_minutos, 60) * 60 > EXTRACT(EPOCH FROM $4::time)
+    ORDER BY data_inicio, horario, id
+    LIMIT 8;
+  `, [evento.congregacao_id, evento.data_inicio, evento.data_fim,
+      evento.horario, Number(evento.duracao_minutos || 60), ignorarId]);
+  return resultado.rows;
+};
+
+const respostaConflitoDireto = (conflitos) => ({
+  codigo: 'CONFLITO_AGENDA',
+  erro: 'Já existe um evento da mesma congregação nesse período e horário.',
+  eventosConflitantes: conflitos,
+  podeConfirmar: true,
+});
 
 // === CONFIGURAÇÃO DO BANCO DE DADOS ===
 const pool = new Pool({
@@ -187,7 +286,8 @@ app.post('/login', loginLimiter, async (req, res) => {
         id: usuario.id, 
         nivel_acesso: usuario.nivel_acesso, 
         status_conta: usuario.status_conta,
-        congregacao_id: usuario.congregacao_id 
+        congregacao_id: usuario.congregacao_id,
+        token_version: Number(usuario.token_version || 0),
       }, 
       JWT_SECRET, 
       { expiresIn: '7d' }
@@ -235,11 +335,14 @@ const verificarToken = async (req, res, next) => {
   try {
     // Permissões atuais: revogações não dependem da expiração do token.
     const resultado = await pool.query(
-      'SELECT id, nivel_acesso, status_conta, congregacao_id FROM usuarios WHERE id = $1',
+      'SELECT id, nivel_acesso, status_conta, congregacao_id, token_version FROM usuarios WHERE id = $1',
       [decodificado.id]
     );
     const usuario = resultado.rows[0];
     if (!usuario) return res.status(401).json({ erro: 'Sessão inválida. Faça login novamente.' });
+    if (Number(usuario.token_version || 0) !== Number(decodificado.token_version || 0)) {
+      return res.status(401).json({ erro: 'Sua senha foi alterada. Entre novamente.' });
+    }
     if (!['MASTER', 'ADMIN', 'MEMBRO'].includes(usuario.nivel_acesso) ||
         !['APROVADO', 'PENDENTE'].includes(usuario.status_conta)) {
       return res.status(403).json({ codigo: 'CONTA_SEM_ACESSO', erro: 'Sua conta não tem acesso. Procure a administração.' });
@@ -287,6 +390,133 @@ app.get('/sessao', verificarToken, async (req, res) => {
   } catch (erro) {
     console.error('Erro ao carregar sessão:', erro);
     res.status(500).json({ erro: 'Não foi possível carregar sua sessão.' });
+  }
+});
+
+// === SENHAS: solicitação, redefinição e alteração autenticada ===
+
+// Resposta genérica para não revelar se determinado e-mail existe.
+app.post('/senha/solicitar-recuperacao', solicitarSenhaLimiter, async (req, res) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  if (!EMAIL_RE.test(email) || email.length > 254) {
+    return res.status(400).json({ erro: 'Informe um e-mail válido.' });
+  }
+  if (!process.env.RESEND_API_KEY || !process.env.EMAIL_FROM) {
+    return res.status(503).json({ erro: 'Recuperação de senha temporariamente indisponível.' });
+  }
+  try {
+    const resultado = await pool.query(
+      "SELECT id FROM usuarios WHERE LOWER(email) = $1 AND status_conta IN ('APROVADO','PENDENTE')",
+      [email]
+    );
+    const usuario = resultado.rows[0];
+    if (usuario) {
+      const codigo = crypto.randomInt(0, 100000000).toString().padStart(8, '0');
+      const hash = hashCodigoSenha(usuario.id, codigo);
+      // Cooldown persistente por usuário: 1 envio a cada 2 minutos, inclusive entre instâncias.
+      const guardado = await pool.query(`
+        INSERT INTO senha_recuperacoes (usuario_id, codigo_hash, expira_em, enviado_em, tentativas)
+        VALUES ($1, $2, NOW() + INTERVAL '15 minutes', NOW(), 0)
+        ON CONFLICT (usuario_id) DO UPDATE
+          SET codigo_hash = EXCLUDED.codigo_hash, expira_em = EXCLUDED.expira_em,
+              enviado_em = EXCLUDED.enviado_em, tentativas = 0
+          WHERE senha_recuperacoes.enviado_em < NOW() - INTERVAL '2 minutes'
+        RETURNING usuario_id
+      `, [usuario.id, hash]);
+      if (guardado.rowCount) {
+        try {
+          await enviarCodigoRecuperacao(email, codigo);
+        } catch (erroEmail) {
+          // Um envio com falha não deve prender a conta no cooldown.
+          await pool.query('DELETE FROM senha_recuperacoes WHERE usuario_id = $1 AND codigo_hash = $2', [usuario.id, hash]);
+          console.error('Falha no envio do código de recuperação:', erroEmail.message);
+        }
+      }
+    }
+    return res.status(202).json({ mensagem: RESPOSTA_RECUPERACAO });
+  } catch (erro) {
+    console.error('Erro ao solicitar recuperação:', erro);
+    return res.status(500).json({ erro: 'Não foi possível processar a solicitação.' });
+  }
+});
+
+app.post('/senha/redefinir', redefinirSenhaLimiter, async (req, res) => {
+  const email = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const { codigo, nova_senha } = req.body || {};
+  if (!EMAIL_RE.test(email) || email.length > 254 || typeof codigo !== 'string' ||
+      !CODIGO_RE.test(codigo) || !senhaSegura(nova_senha)) {
+    return res.status(400).json({ erro: 'Informe e-mail, código de 8 dígitos e nova senha com 10 caracteres, maiúscula, minúscula e número.' });
+  }
+  const erroCodigo = { erro: 'Código inválido ou expirado. Solicite outro código, se necessário.' };
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const resultado = await client.query(`
+      SELECT r.usuario_id, r.codigo_hash, r.expira_em, r.tentativas
+      FROM senha_recuperacoes r
+      JOIN usuarios u ON u.id = r.usuario_id
+      WHERE LOWER(u.email) = $1 AND u.status_conta IN ('APROVADO','PENDENTE')
+      FOR UPDATE OF r
+    `, [email]);
+    const recuperacao = resultado.rows[0];
+    if (!recuperacao) {
+      await client.query('ROLLBACK');
+      return res.status(400).json(erroCodigo);
+    }
+    if (Number(recuperacao.tentativas) >= 5 || new Date(recuperacao.expira_em).getTime() <= Date.now()) {
+      await client.query('DELETE FROM senha_recuperacoes WHERE usuario_id = $1', [recuperacao.usuario_id]);
+      await client.query('COMMIT');
+      return res.status(400).json(erroCodigo);
+    }
+    const hashInformado = hashCodigoSenha(recuperacao.usuario_id, codigo);
+    if (!codigoCorreto(recuperacao.codigo_hash, hashInformado)) {
+      await client.query('UPDATE senha_recuperacoes SET tentativas = tentativas + 1 WHERE usuario_id = $1', [recuperacao.usuario_id]);
+      await client.query('COMMIT');
+      return res.status(400).json(erroCodigo);
+    }
+
+    const novoHash = await bcrypt.hash(nova_senha, 12);
+    await client.query('UPDATE usuarios SET senha_hash = $1, token_version = token_version + 1 WHERE id = $2',
+      [novoHash, recuperacao.usuario_id]);
+    await client.query('DELETE FROM senha_recuperacoes WHERE usuario_id = $1', [recuperacao.usuario_id]);
+    await client.query('COMMIT');
+    return res.json({ mensagem: 'Senha redefinida. Entre novamente com a nova senha.' });
+  } catch (erro) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
+    console.error('Erro ao redefinir senha:', erro);
+    return res.status(500).json({ erro: 'Não foi possível redefinir a senha.' });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+app.post('/senha/alterar', verificarToken, alterarSenhaLimiter, async (req, res) => {
+  const { senha_atual, nova_senha } = req.body || {};
+  if (typeof senha_atual !== 'string' || !senha_atual || senha_atual.length > 128 || !senhaSegura(nova_senha)) {
+    return res.status(400).json({ erro: 'Informe a senha atual e uma nova senha com ao menos 10 caracteres, maiúscula, minúscula e número.' });
+  }
+  if (senha_atual === nova_senha) return res.status(400).json({ erro: 'A nova senha deve ser diferente da atual.' });
+
+  try {
+    const resultado = await pool.query('SELECT senha_hash FROM usuarios WHERE id = $1', [req.usuario.id]);
+    if (!resultado.rowCount || !await bcrypt.compare(senha_atual, resultado.rows[0].senha_hash)) {
+      return res.status(403).json({ erro: 'A senha atual está incorreta.' });
+    }
+    const novoHash = await bcrypt.hash(nova_senha, 12);
+    // Impede sobrescrever uma troca concorrente e revoga as sessões anteriores.
+    const atualizado = await pool.query(`
+      UPDATE usuarios SET senha_hash = $1, token_version = token_version + 1
+      WHERE id = $2 AND senha_hash = $3 RETURNING id
+    `, [novoHash, req.usuario.id, resultado.rows[0].senha_hash]);
+    if (!atualizado.rowCount) {
+      return res.status(409).json({ erro: 'A senha foi alterada em outra sessão. Entre novamente.' });
+    }
+    await pool.query('DELETE FROM senha_recuperacoes WHERE usuario_id = $1', [req.usuario.id]);
+    return res.json({ mensagem: 'Senha alterada. Entre novamente em todos os dispositivos.' });
+  } catch (erro) {
+    console.error('Erro ao alterar senha:', erro);
+    return res.status(500).json({ erro: 'Não foi possível alterar a senha.' });
   }
 });
 
@@ -342,6 +572,8 @@ app.get('/eventos', verificarToken, async (req, res) => {
 });
 
 app.post('/eventos', verificarToken, somenteGestores, async (req, res) => {
+  let client;
+  let transacaoAberta = false;
   try {
     const { titulo, data_inicio, data_fim, horario, congregacao_id, legenda } = req.body;
     const { id: usuario_id, nivel_acesso, congregacao_id: congregacaoAdmin } = req.usuario;
@@ -352,29 +584,64 @@ app.post('/eventos', verificarToken, somenteGestores, async (req, res) => {
       return res.status(400).json({ erro: 'A legenda deve ter no máximo 2000 caracteres.' });
     }
 
-    let congregacaoFinal = congregacao_id;
-    if (nivel_acesso === 'ADMIN') {
-      congregacaoFinal = congregacaoAdmin;
-    } else if (nivel_acesso === 'MASTER' && !idValido(congregacaoFinal)) {
-      return res.status(400).json({ erro: "O Master deve selecionar uma congregação para o evento." });
+    const duracao = Number(req.body.duracao_minutos ?? 60);
+    if (!Number.isInteger(duracao) || duracao < 15 || duracao > 1440) {
+      return res.status(400).json({ erro: 'A duração deve estar entre 15 e 1440 minutos.' });
     }
 
-    const query = `
-      INSERT INTO eventos (titulo, data_inicio, data_fim, horario, congregacao_id, criado_por_usuario_id, legenda)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING *;
-    `;
-    const valores = [titulo.trim(), data_inicio, data_fim, horario.slice(0, 5), Number(congregacaoFinal), usuario_id, legenda?.trim() || null];
-    const resultado = await pool.query(query, valores);
+    const congregacaoFinal = nivel_acesso === 'ADMIN' ? congregacaoAdmin : congregacao_id;
+    if (!idValido(congregacaoFinal)) {
+      return res.status(400).json({ erro: 'Selecione uma congregação válida.' });
+    }
 
-    res.status(201).json({ mensagem: "Evento criado com sucesso!", evento: resultado.rows[0] });
+    const eventoNovo = {
+      titulo: titulo.trim(), data_inicio, data_fim, horario: horario.slice(0, 5),
+      duracao_minutos: duracao, congregacao_id: Number(congregacaoFinal),
+    };
+
+    client = await pool.connect();
+    await client.query('BEGIN');
+    transacaoAberta = true;
+    await bloquearAgendaDaCongregacao(client, [congregacaoFinal]);
+
+    const conflitos = await consultarConflitosPublicados(client, eventoNovo);
+    if (conflitos.length > 0 && !(nivel_acesso === 'MASTER' && req.body.confirmar_conflito === true)) {
+      await client.query('ROLLBACK');
+      transacaoAberta = false;
+      return res.status(409).json({
+        ...respostaConflitoDireto(conflitos),
+        podeConfirmar: nivel_acesso === 'MASTER',
+      });
+    }
+
+    const resultado = await client.query(`
+      INSERT INTO eventos (titulo, data_inicio, data_fim, horario, duracao_minutos, congregacao_id, criado_por_usuario_id, legenda)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING *;
+    `, [
+      eventoNovo.titulo, data_inicio, data_fim, eventoNovo.horario, duracao,
+      Number(congregacaoFinal), usuario_id, legenda?.trim() || null,
+    ]);
+
+    await client.query('COMMIT');
+    transacaoAberta = false;
+    res.status(201).json({ mensagem: 'Evento criado com sucesso!', evento: resultado.rows[0] });
   } catch (erro) {
-    console.error("Erro ao criar evento:", erro);
-    res.status(500).json({ erro: "Erro ao criar evento" });
+    if (transacaoAberta && client) {
+      try { await client.query('ROLLBACK'); } catch (rollbackErro) {
+        console.error('Erro ao desfazer criação de evento:', rollbackErro);
+      }
+    }
+    console.error('Erro ao criar evento:', erro);
+    res.status(500).json({ erro: 'Erro ao criar evento' });
+  } finally {
+    client?.release();
   }
 });
 
 app.put('/eventos/:id', verificarToken, somenteGestores, async (req, res) => {
+  let client;
+  let transacaoAberta = false;
   try {
     const eventoId = req.params.id;
     const { titulo, data_inicio, data_fim, horario, congregacao_id, legenda } = req.body;
@@ -387,34 +654,75 @@ app.put('/eventos/:id', verificarToken, somenteGestores, async (req, res) => {
       return res.status(400).json({ erro: 'A legenda deve ter no máximo 2000 caracteres.' });
     }
 
-    const eventoRes = await pool.query('SELECT * FROM eventos WHERE id = $1', [eventoId]);
-    if (eventoRes.rowCount === 0) {
-      return res.status(404).json({ erro: "Evento não encontrado." });
-    }
-    const eventoAtual = eventoRes.rows[0];
-
-    if (nivel_acesso === 'ADMIN' && eventoAtual.congregacao_id !== congregacaoAdmin) {
-      return res.status(403).json({ erro: "Admin só pode editar eventos da sua própria congregação." });
-    }
-
     const congregacaoFinal = nivel_acesso === 'MASTER' ? congregacao_id : congregacaoAdmin;
     if (!idValido(congregacaoFinal)) {
       return res.status(400).json({ erro: 'Selecione uma congregação válida.' });
     }
 
-    const query = `
-      UPDATE eventos 
-      SET titulo = $1, data_inicio = $2, data_fim = $3, horario = $4, congregacao_id = $5, legenda = $6
-      WHERE id = $7
-      RETURNING *;
-    `;
-    const valores = [titulo.trim(), data_inicio, data_fim, horario.slice(0, 5), Number(congregacaoFinal), legenda?.trim() || null, eventoId];
-    const resultado = await pool.query(query, valores);
+    client = await pool.connect();
+    await client.query('BEGIN');
+    transacaoAberta = true;
+    await bloquearAgendaDaCongregacao(client, [congregacaoFinal]);
 
-    res.json({ mensagem: "Evento atualizado com sucesso!", evento: resultado.rows[0] });
+    const eventoRes = await client.query('SELECT * FROM eventos WHERE id = $1 FOR UPDATE', [eventoId]);
+    if (eventoRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      transacaoAberta = false;
+      return res.status(404).json({ erro: 'Evento não encontrado.' });
+    }
+
+    const eventoAtual = eventoRes.rows[0];
+    if (nivel_acesso === 'ADMIN' && Number(eventoAtual.congregacao_id) !== Number(congregacaoAdmin)) {
+      await client.query('ROLLBACK');
+      transacaoAberta = false;
+      return res.status(403).json({ erro: 'Admin só pode editar eventos da sua própria congregação.' });
+    }
+
+    const duracao = Number(req.body.duracao_minutos ?? eventoAtual.duracao_minutos ?? 60);
+    if (!Number.isInteger(duracao) || duracao < 15 || duracao > 1440) {
+      await client.query('ROLLBACK');
+      transacaoAberta = false;
+      return res.status(400).json({ erro: 'A duração deve estar entre 15 e 1440 minutos.' });
+    }
+
+    const eventoEditado = {
+      titulo: titulo.trim(), data_inicio, data_fim, horario: horario.slice(0, 5),
+      duracao_minutos: duracao, congregacao_id: Number(congregacaoFinal),
+    };
+    const conflitos = await consultarConflitosPublicados(client, eventoEditado, Number(eventoId));
+    if (conflitos.length > 0 && !(nivel_acesso === 'MASTER' && req.body.confirmar_conflito === true)) {
+      await client.query('ROLLBACK');
+      transacaoAberta = false;
+      return res.status(409).json({
+        ...respostaConflitoDireto(conflitos),
+        podeConfirmar: nivel_acesso === 'MASTER',
+      });
+    }
+
+    const resultado = await client.query(`
+      UPDATE eventos
+      SET titulo = $1, data_inicio = $2, data_fim = $3, horario = $4,
+          congregacao_id = $5, legenda = $6, duracao_minutos = $7
+      WHERE id = $8
+      RETURNING *;
+    `, [
+      eventoEditado.titulo, data_inicio, data_fim, eventoEditado.horario,
+      Number(congregacaoFinal), legenda?.trim() || null, duracao, eventoId,
+    ]);
+
+    await client.query('COMMIT');
+    transacaoAberta = false;
+    res.json({ mensagem: 'Evento atualizado com sucesso!', evento: resultado.rows[0] });
   } catch (erro) {
-    console.error("Erro ao atualizar evento:", erro);
-    res.status(500).json({ erro: "Erro ao atualizar evento" });
+    if (transacaoAberta && client) {
+      try { await client.query('ROLLBACK'); } catch (rollbackErro) {
+        console.error('Erro ao desfazer edição de evento:', rollbackErro);
+      }
+    }
+    console.error('Erro ao atualizar evento:', erro);
+    res.status(500).json({ erro: 'Erro ao atualizar evento' });
+  } finally {
+    client?.release();
   }
 });
 
@@ -597,6 +905,28 @@ app.put('/usuarios/perfil', verificarToken, async (req, res) => {
 // === ROTAS DO MURAL DE EVENTOS ===
 // ========================================================
 
+// Links temporários assinados permitem que a Web e o Android carreguem fotos
+// separadamente do JSON, sem expor o JWT do usuário a componentes de imagem.
+// O endpoint legado continua intacto para versões anteriores do aplicativo.
+const DURACAO_LINK_IMAGEM_S = 12 * 60 * 60;
+const CACHE_IMAGEM_S = 30 * 60;
+const assinaturaImagem = (id, expira) =>
+  crypto.createHmac('sha256', JWT_SECRET).update(`mural-imagem:${id}:${expira}`).digest('hex');
+const criarLinkImagem = id => {
+  // Mantém a URL estável dentro da hora para aproveitar o cache dos clientes.
+  const expira = (Math.floor(Date.now() / 3_600_000) * 3600) + DURACAO_LINK_IMAGEM_S;
+  return `/mural/${id}/imagem?exp=${expira}&sig=${assinaturaImagem(id, expira)}`;
+};
+const assinaturaImagemValida = (id, expira, assinatura) => {
+  if (!idValido(id) || typeof expira !== 'string' || !/^\d{10}$/.test(expira) ||
+      typeof assinatura !== 'string' || !/^[a-f0-9]{64}$/.test(assinatura)) return false;
+  const agora = Math.floor(Date.now() / 1000);
+  const vencimento = Number(expira);
+  if (vencimento <= agora || vencimento > agora + DURACAO_LINK_IMAGEM_S) return false;
+  const esperado = assinaturaImagem(id, expira);
+  return crypto.timingSafeEqual(Buffer.from(assinatura, 'hex'), Buffer.from(esperado, 'hex'));
+};
+
 app.post('/mural', verificarToken, somenteGestores, async (req, res) => {
   try {
     const { titulo, descricao, local, tipo_midia, midia, data_inicio, data_fim } = req.body;
@@ -639,18 +969,28 @@ app.post('/mural', verificarToken, somenteGestores, async (req, res) => {
 app.get('/mural', verificarToken, async (req, res) => {
   try {
     const usuario_atual_id = req.usuario.id;
+    const modoLeve = req.query.midia === 'link';
+
+    // No modo leve o PostgreSQL não devolve Base64 no SELECT.
+    // A forma antiga da resposta permanece disponível para clientes instalados.
+    const campoMidia = modoLeve
+      ? `CASE WHEN LEFT(m.midia, 5) = 'data:' THEN NULL ELSE m.midia END AS midia,
+         (LEFT(m.midia, 5) = 'data:') AS midia_embutida`
+      : 'm.midia';
 
     const query = `
-      SELECT m.*, COALESCE(u.nome_exibicao, u.nome_completo) as autor, u.foto_perfil as autor_foto,
+      SELECT m.id, m.usuario_id, m.congregacao_id, m.titulo, m.descricao,
+        m.local, m.tipo_midia, m.data_inicio, m.data_fim, ${campoMidia},
+        COALESCE(u.nome_exibicao, u.nome_completo) as autor, u.foto_perfil as autor_foto,
         (SELECT COUNT(*) FROM mural_curtidas mc WHERE mc.post_id = m.id) as total_curtidas,
         EXISTS (SELECT 1 FROM mural_curtidas mc WHERE mc.post_id = m.id AND mc.usuario_id = $1) as curtiu_por_mim
       FROM mural_eventos m
       JOIN usuarios u ON m.usuario_id = u.id
       WHERE m.data_fim >= CURRENT_DATE
-      ORDER BY m.data_inicio ASC, m.criado_em DESC;
+      ORDER BY m.data_inicio ASC, m.criado_em DESC, m.id DESC;
     `;
     const resultado = await pool.query(query, [usuario_atual_id]);
-    
+
     const posts = resultado.rows.map(post => ({
       id: post.id,
       usuario_id: post.usuario_id,
@@ -661,7 +1001,7 @@ app.get('/mural', verificarToken, async (req, res) => {
       descricao: post.descricao,
       local: post.local,
       tipo: post.tipo_midia,
-      midia: post.midia,
+      midia: modoLeve && post.midia_embutida ? criarLinkImagem(post.id) : post.midia,
       totalCurtidas: parseInt(post.total_curtidas) || 0,
       curtiuPorMim: post.curtiu_por_mim,
       dataInicio: post.data_inicio,
@@ -669,10 +1009,47 @@ app.get('/mural', verificarToken, async (req, res) => {
       comentarios: []
     }));
 
+    // Evita cache do JSON personalizado com curtidas, usuário e links de imagem.
+    res.set('Cache-Control', 'private, no-store');
     res.json(posts);
   } catch (erro) {
     console.error("Erro ao buscar mural:", erro);
     res.status(500).json({ erro: "Erro interno ao buscar o mural." });
+  }
+});
+
+// A URL só é emitida após uma consulta autenticada ao mural e expira em até 12h.
+// Link válido concede leitura apenas da foto específica; nunca dá acesso à sessão.
+app.get('/mural/:id/imagem', async (req, res) => {
+  const id = req.params.id;
+  if (!assinaturaImagemValida(id, req.query.exp, req.query.sig)) {
+    return res.status(403).json({ erro: 'Link de imagem inválido ou expirado.' });
+  }
+  try {
+    const resultado = await pool.query(
+      'SELECT tipo_midia, midia FROM mural_eventos WHERE id = $1 AND data_fim >= CURRENT_DATE',
+      [Number(id)]
+    );
+    if (!resultado.rowCount) return res.status(404).json({ erro: 'Imagem não encontrada.' });
+
+    const { tipo_midia, midia } = resultado.rows[0];
+    if (tipo_midia !== 'imagem' || typeof midia !== 'string') {
+      return res.status(404).json({ erro: 'Imagem não encontrada.' });
+    }
+    const match = IMAGE_RE.exec(midia);
+    if (!match || !imagemValida(midia)) {
+      return res.status(404).json({ erro: 'Imagem não encontrada.' });
+    }
+    const mime = `image/${match[1]}`;
+    const buffer = Buffer.from(match[2], 'base64');
+    res.set('Content-Type', mime);
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('Cache-Control', `private, max-age=${CACHE_IMAGEM_S}`);
+    res.set('Content-Length', String(buffer.byteLength));
+    return res.send(buffer);
+  } catch (erro) {
+    console.error('Erro ao carregar imagem do mural:', erro);
+    return res.status(500).json({ erro: 'Erro ao carregar imagem.' });
   }
 });
 
@@ -824,33 +1201,41 @@ app.post('/comentarios/:id/curtir', verificarToken, verificarAprovacao, async (r
 app.delete('/comentarios/:id', verificarToken, verificarAprovacao, async (req, res) => {
   try {
     const comentario_id = req.params.id;
-    const { id: usuario_id, nivel_acesso, congregacao_id } = req.usuario;
+    const { id: usuario_id, nivel_acesso } = req.usuario;
 
-    const queryInfo = `
-      SELECT c.*, p.congregacao_id as post_congregacao_id 
-      FROM mural_comentarios c
-      JOIN mural_eventos p ON c.post_id = p.id
-      WHERE c.id = $1;
-    `;
-    const comentarioRes = await pool.query(queryInfo, [comentario_id]);
-    if (comentarioRes.rowCount === 0) {
-      return res.status(404).json({ erro: "Comentário não encontrado." });
-    }
-    const com = comentarioRes.rows[0];
-
-    const isMaster = nivel_acesso === 'MASTER';
-    const isDono = com.usuario_id === usuario_id;
-    const isAdminDaCongregacao = nivel_acesso === 'ADMIN' && com.post_congregacao_id === congregacao_id;
-
-    if (!isMaster && !isDono && !isAdminDaCongregacao) {
-      return res.status(403).json({ erro: "Você não tem permissão para excluir este comentário." });
+    if (!idValido(comentario_id)) {
+      return res.status(400).json({ erro: 'Comentário inválido.' });
     }
 
-    await pool.query('DELETE FROM mural_comentarios WHERE id = $1 OR parent_id = $1', [comentario_id]);
-    res.json({ mensagem: "Comentário excluído com sucesso!" });
+    const comentarioRes = await pool.query(
+      'SELECT usuario_id FROM mural_comentarios WHERE id = $1',
+      [comentario_id]
+    );
+    if (!comentarioRes.rowCount) {
+      return res.status(404).json({ erro: 'Comentário não encontrado.' });
+    }
+
+    // O autor exclui o próprio comentário; ADMIN e MASTER moderam todos os comentários.
+    // Contas pendentes já são bloqueadas pelo middleware verificarAprovacao.
+    const autor = Number(comentarioRes.rows[0].usuario_id) === Number(usuario_id);
+    const moderador = nivel_acesso === 'MASTER' || nivel_acesso === 'ADMIN';
+    if (!autor && !moderador) {
+      return res.status(403).json({ erro: 'Você não tem permissão para excluir este comentário.' });
+    }
+
+    // A FK parent_same_post possui ON DELETE CASCADE: respostas descendentes e
+    // curtidas relacionadas são removidas pelo PostgreSQL.
+    const resultado = await pool.query(
+      'DELETE FROM mural_comentarios WHERE id = $1 RETURNING id',
+      [comentario_id]
+    );
+    if (!resultado.rowCount) {
+      return res.status(404).json({ erro: 'Comentário não encontrado.' });
+    }
+    res.json({ mensagem: 'Comentário excluído com sucesso!' });
   } catch (erro) {
-    console.error("Erro ao excluir comentário:", erro);
-    res.status(500).json({ erro: "Erro ao excluir comentário." });
+    console.error('Erro ao excluir comentário:', erro);
+    res.status(500).json({ erro: 'Erro ao excluir comentário.' });
   }
 });
 
@@ -987,8 +1372,8 @@ app.post('/gestao-datas', verificarToken, somenteMaster, async (req, res) => {
           AND data_inicio <= $3
           AND data_fim >= $2
       ) AS eventos_conflitantes
-      WHERE (horario, horario + duracao_minutos * INTERVAL '1 minute')
-        OVERLAPS ($4::time, $4::time + $5 * INTERVAL '1 minute')
+      WHERE EXTRACT(EPOCH FROM horario::time) < EXTRACT(EPOCH FROM $4::time) + $5 * 60
+        AND EXTRACT(EPOCH FROM horario::time) + duracao_minutos * 60 > EXTRACT(EPOCH FROM $4::time)
       LIMIT 5;
     `, [congregacao_id, data_inicio, data_fim, horario, duracao]);
 
@@ -1093,20 +1478,110 @@ app.delete('/gestao-datas/:id', verificarToken, somenteMaster, async (req, res) 
 });
 
 app.post('/gestao-datas/publicar', verificarToken, somenteMaster, async (req, res) => {
-  const client = await pool.connect();
+  let client;
+  let transacaoAberta = false;
   try {
+    client = await pool.connect();
     await client.query('BEGIN');
-    const master_id = req.usuario.id;
+    transacaoAberta = true;
 
-    const rascunhosRes = await client.query(` SELECT * FROM gestao_datas_rascunho WHERE master_id = $1 AND publicado = FALSE ORDER BY id FOR UPDATE; `, 
-      [master_id]);
+    const master_id = req.usuario.id;
+    const confirmarConflitos = req.body?.confirmar_conflitos === true;
+
+    // Bloqueia os rascunhos até o fim da publicação para impedir duplicação.
+    const rascunhosRes = await client.query(`
+      SELECT r.id, r.titulo, r.data_inicio::text AS data_inicio, r.data_fim::text AS data_fim,
+             r.horario::text AS horario, r.duracao_minutos, r.congregacao_id,
+             r.legenda, r.marcador, c.nome AS congregacao
+      FROM gestao_datas_rascunho r
+      JOIN congregacoes c ON c.id = r.congregacao_id
+      WHERE r.master_id = $1 AND r.publicado = FALSE
+      ORDER BY r.id FOR UPDATE OF r;
+    `, [master_id]);
 
     if (rascunhosRes.rowCount === 0) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ erro: "Não há eventos pendentes para publicar." });
+      transacaoAberta = false;
+      return res.status(400).json({ erro: 'Não há eventos pendentes para publicar.' });
     }
 
-    for (const rascunho of rascunhosRes.rows) {
+    const rascunhos = rascunhosRes.rows;
+    await bloquearAgendaDaCongregacao(client, rascunhos.map(r => r.congregacao_id));
+
+    const inicio = rascunhos.reduce((min, r) => r.data_inicio < min ? r.data_inicio : min, rascunhos[0].data_inicio);
+    const fim = rascunhos.reduce((max, r) => r.data_fim > max ? r.data_fim : max, rascunhos[0].data_fim);
+    const congregacoes = [...new Set(rascunhos.map(r => Number(r.congregacao_id)))];
+    const publicadosRes = await client.query(`
+      SELECT e.id, e.titulo, e.data_inicio::text AS data_inicio, e.data_fim::text AS data_fim,
+             e.horario::text AS horario, COALESCE(e.duracao_minutos, 60) AS duracao_minutos,
+             e.congregacao_id, c.nome AS congregacao
+      FROM eventos e
+      JOIN congregacoes c ON c.id = e.congregacao_id
+      WHERE e.congregacao_id = ANY($1::integer[])
+        AND e.data_inicio <= $3::date AND e.data_fim >= $2::date;
+    `, [congregacoes, inicio, fim]);
+
+    const conflitos = [];
+    const idsComConflitos = new Set();
+
+    const detalharConflito = (rascunho, relacionado, origem) => ({
+      rascunho_id: rascunho.id,
+      titulo: rascunho.titulo,
+      data_inicio: rascunho.data_inicio,
+      data_fim: rascunho.data_fim,
+      horario: rascunho.horario,
+      duracao_minutos: rascunho.duracao_minutos || 60,
+      congregacao: rascunho.congregacao,
+      evento_conflitante: relacionado.titulo,
+      evento_conflitante_data_inicio: relacionado.data_inicio,
+      evento_conflitante_data_fim: relacionado.data_fim,
+      evento_conflitante_horario: relacionado.horario,
+      evento_conflitante_duracao_minutos: relacionado.duracao_minutos || 60,
+      origem,
+    });
+
+    for (const rascunho of rascunhos) {
+      for (const publicado of publicadosRes.rows) {
+        if (!eventosSobrepostos(rascunho, publicado)) continue;
+        idsComConflitos.add(rascunho.id);
+        conflitos.push(detalharConflito(rascunho, publicado, 'AGENDA PUBLICADA'));
+      }
+    }
+
+    // Também valida eventos dentro do mesmo lote, antes de inserir qualquer registro.
+    for (let i = 0; i < rascunhos.length; i++) {
+      for (let j = i + 1; j < rascunhos.length; j++) {
+        const a = rascunhos[i];
+        const b = rascunhos[j];
+        if (!eventosSobrepostos(a, b)) continue;
+        idsComConflitos.add(a.id);
+        idsComConflitos.add(b.id);
+        conflitos.push(detalharConflito(a, b, 'PLANEJAMENTO'));
+      }
+    }
+
+    const revisar = rascunhos.filter(r => r.marcador === 'REVISAR').length;
+    const marcadosConflito = rascunhos.filter(r => r.marcador === 'CONFLITO').length;
+    const resumo = {
+      revisar,
+      marcadosConflito,
+      eventosEmConflito: idsComConflitos.size,
+      sobreposicoesEncontradas: conflitos.length,
+    };
+
+    // Marcadores são avisos manuais; conflito real é sempre recalculado no servidor.
+    if ((revisar > 0 || marcadosConflito > 0 || conflitos.length > 0) && !confirmarConflitos) {
+      await client.query('ROLLBACK');
+      transacaoAberta = false;
+      return res.status(409).json({
+        codigo: 'CONFIRMACAO_CONFLITOS_NECESSARIA',
+        erro: 'Há eventos com conflito ou pendentes de revisão. O MASTER deve confirmar a publicação.',
+        resumo,
+        conflitos: conflitos.slice(0, 8),
+      });
+    }
+
+    for (const rascunho of rascunhos) {
       await client.query(`
         INSERT INTO eventos (titulo, data_inicio, data_fim, horario, duracao_minutos, congregacao_id, criado_por_usuario_id, legenda)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
@@ -1118,23 +1593,32 @@ app.post('/gestao-datas/publicar', verificarToken, somenteMaster, async (req, re
         rascunho.duracao_minutos || 60,
         rascunho.congregacao_id,
         master_id,
-        rascunho.legenda
+        rascunho.legenda,
       ]);
     }
 
     await client.query(
-      'UPDATE gestao_datas_rascunho SET publicado = TRUE WHERE master_id = $1 AND publicado = FALSE', 
-      [master_id]
+      'UPDATE gestao_datas_rascunho SET publicado = TRUE WHERE master_id = $1 AND id = ANY($2::integer[]) AND publicado = FALSE',
+      [master_id, rascunhos.map(r => r.id)]
     );
 
     await client.query('COMMIT');
-    res.json({ mensagem: "Todos os eventos foram publicados com sucesso na Agenda geral!" });
+    transacaoAberta = false;
+    res.json({
+      mensagem: 'Todos os eventos foram publicados com sucesso na Agenda geral!',
+      quantidadePublicada: rascunhos.length,
+      confirmacaoExcepcional: confirmarConflitos,
+    });
   } catch (erro) {
-    await client.query('ROLLBACK');
-    console.error("Erro na publicação em lote:", erro);
-    res.status(500).json({ erro: "Erro ao publicar eventos na Agenda." });
+    if (transacaoAberta && client) {
+      try { await client.query('ROLLBACK'); } catch (rollbackErro) {
+        console.error('Erro ao desfazer publicação:', rollbackErro);
+      }
+    }
+    console.error('Erro na publicação em lote:', erro);
+    res.status(500).json({ erro: 'Erro ao publicar eventos na Agenda.' });
   } finally {
-    client.release();
+    client?.release();
   }
 });
 

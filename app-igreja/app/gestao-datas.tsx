@@ -1,19 +1,9 @@
+import { useAppDialog } from '@/components/app-dialog';
 import { API_URL, apiFetch, getSessionToken } from '@/services/session';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
-  StyleSheet,
-  Text,
-  View,
-  ScrollView,
-  TouchableOpacity,
-  Modal,
-  TextInput,
-  Alert,
-  ActivityIndicator,
-  useWindowDimensions,
-  Platform
-} from 'react-native';
+  StyleSheet, Text, View, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, useWindowDimensions, Platform } from 'react-native';
 
 import { router, Stack, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -26,7 +16,14 @@ const MESES = [
 
 const DIAS_SEMANA = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
 
+const ordenarEventos = (eventos: any[]) => [...eventos].sort((a, b) =>
+  String(a.data_inicio).localeCompare(String(b.data_inicio)) ||
+  String(a.horario || '').localeCompare(String(b.horario || '')) ||
+  Number(a.id) - Number(b.id)
+);
+
 export default function TelaGestaoDatas() {
+  const { alert: mostrarDialogo, showDialog } = useAppDialog();
   const { width, height: windowHeight } = useWindowDimensions();
   const isDesktop = width >= 900;
 
@@ -37,6 +34,13 @@ export default function TelaGestaoDatas() {
   const [congregacoes, setCongregacoes] = useState<any[]>([]);
   const [eventosPlanejados, setEventosPlanejados] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(false);
+  const [salvandoRascunho, setSalvandoRascunho] = useState(false);
+  const [publicando, setPublicando] = useState(false);
+  const [mensagemOperacao, setMensagemOperacao] = useState('');
+  const dadosCarregadosRef = useRef(false);
+  const revisaoLocalRef = useRef(0);
+  const salvandoRef = useRef(false);
+  const publicandoRef = useRef(false);
 
   const [dataSelecionada, setDataSelecionada] = useState(
     formatarData(new Date())
@@ -78,6 +82,16 @@ export default function TelaGestaoDatas() {
   // Modal de opções
   const [modalOpcoesVisivel, setModalOpcoesVisivel] = useState(false);
   const [eventoAtivo, setEventoAtivo] = useState<any>(null);
+
+  useEffect(() => {
+    if (!mensagemOperacao) return;
+    const timeout = setTimeout(() => setMensagemOperacao(''), 4000);
+    return () => clearTimeout(timeout);
+  }, [mensagemOperacao]);
+
+  const mostrarAviso = (titulo: string, mensagem: string) => {
+    mostrarDialogo(titulo, mensagem);
+  };
 
   function formatarData(data: Date) {
     const ano = data.getFullYear();
@@ -149,7 +163,9 @@ export default function TelaGestaoDatas() {
   // =====================================================
 
   const carregarDados = async () => {
-    setCarregando(true);
+    const revisaoAoIniciar = revisaoLocalRef.current;
+    // O spinner de tela inteira só aparece no carregamento inicial.
+    if (!dadosCarregadosRef.current) setCarregando(true);
 
     try {
       const userToken = await getSessionToken();
@@ -174,11 +190,16 @@ export default function TelaGestaoDatas() {
       });
 
       if (respPlan.ok) {
-        setEventosPlanejados(await respPlan.json());
+        const dados = await respPlan.json();
+        // Uma resposta iniciada antes de uma mutação local não pode desfazê-la.
+        if (revisaoAoIniciar === revisaoLocalRef.current) {
+          setEventosPlanejados(dados);
+        }
+        dadosCarregadosRef.current = true;
       }
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
-      Alert.alert('Erro', 'Não foi possível carregar os dados.');
+      mostrarDialogo('Erro', 'Não foi possível carregar os dados.');
     } finally {
       setCarregando(false);
     }
@@ -301,7 +322,7 @@ export default function TelaGestaoDatas() {
   const salvarCriacaoRapida = () => {
     const validarHora = (valor: string) => /^([01]\d|2[0-3]):([0-5]\d)$/.test(valor);
     if (!validarHora(horario) || !validarHora(horarioFimRapido)) {
-      return Alert.alert('Horário inválido', 'Informe os horários no formato HH:MM.');
+      return mostrarDialogo('Horário inválido', 'Informe os horários no formato HH:MM.');
     }
     const [horaInicio, minutoInicio] = horario.split(':').map(Number);
     const [horaFim, minutoFim] = horarioFimRapido.split(':').map(Number);
@@ -309,7 +330,7 @@ export default function TelaGestaoDatas() {
     const fim = horaFim * 60 + minutoFim;
     const duracao = fim - inicio;
     if (duracao < 15 || duracao > 1440) {
-      return Alert.alert('Horário inválido', 'O término deve ser posterior ao início, com duração mínima de 15 minutos.');
+      return mostrarDialogo('Horário inválido', 'O término deve ser posterior ao início, com duração mínima de 15 minutos.');
     }
     setDuracaoMinutos(String(duracao));
     salvarEventoRascunho(duracao);
@@ -335,7 +356,7 @@ export default function TelaGestaoDatas() {
 
   const confirmarDatas = () => {
     if (!dataInicio) {
-      return Alert.alert('Atenção', 'Selecione a data.');
+      return mostrarDialogo('Atenção', 'Selecione a data.');
     }
 
     if (!dataFim) {
@@ -350,33 +371,33 @@ export default function TelaGestaoDatas() {
   // =====================================================
 
   const salvarEventoRascunho = async (duracaoRapida?: number) => {
+    if (salvandoRef.current) return;
     if (!titulo.trim()) {
-      return Alert.alert('Atenção', 'Informe o título do evento.');
+      return mostrarAviso('Atenção', 'Informe o título do evento.');
     }
-
     if (!congregacaoId) {
-      return Alert.alert('Atenção', 'Selecione uma congregação.');
+      return mostrarAviso('Atenção', 'Selecione uma congregação.');
     }
-
     if (!dataInicio) {
-      return Alert.alert('Atenção', 'Selecione a data do evento.');
+      return mostrarAviso('Atenção', 'Selecione a data do evento.');
     }
-
     if (!token) {
-      return Alert.alert('Erro', 'Sua sessão expirou. Faça login novamente.');
+      return mostrarAviso('Erro', 'Sua sessão expirou. Faça login novamente.');
     }
 
     const duracao = duracaoRapida ?? Number(duracaoMinutos);
     if (!Number.isInteger(duracao) || duracao < 15 || duracao > 1440) {
-      return Alert.alert('Atenção', 'Informe uma duração entre 15 e 1440 minutos.');
+      return mostrarAviso('Atenção', 'Informe uma duração entre 15 e 1440 minutos.');
     }
 
+    salvandoRef.current = true;
+    setSalvandoRascunho(true);
     try {
-      const resp = await apiFetch(`${API_URL}/gestao-datas`, {
+      const resp = await apiFetch(API_URL + '/gestao-datas', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+          Authorization: 'Bearer ' + token,
         },
         body: JSON.stringify({
           titulo: titulo.trim(),
@@ -389,31 +410,34 @@ export default function TelaGestaoDatas() {
           marcador: marcadorSelecionado,
         }),
       });
-
       const dados = await resp.json();
+      if (!resp.ok || !dados.evento?.id) {
+        mostrarAviso('Erro', dados.erro || 'Não foi possível salvar.');
+        return;
+      }
 
-      if (resp.ok) {
-        setModalCriarVisivel(false);
-        setCriacaoRapidaVisivel(false);
-        await carregarDados();
-
-        if (dados.conflitoDetectado) {
-          Alert.alert(
-            'Conflito identificado!',
-            'O evento foi salvo no planejamento, mas existe outro evento da mesma congregação no mesmo período e horário. Ele foi marcado em vermelho para revisão.'
-          );
-        } else {
-          Alert.alert(
-            'Sucesso',
-            dados.mensagem || 'Evento salvo no planejamento!'
-          );
-        }
-      } else {
-        Alert.alert('Erro', dados.erro || 'Não foi possível salvar.');
+      const congregacao = congregacoes.find(c => Number(c.id) === Number(congregacaoId));
+      // Usa o evento confirmado pela API; não precisa consultar a lista inteira novamente.
+      revisaoLocalRef.current += 1;
+      setEventosPlanejados(atuais => ordenarEventos([
+        ...atuais,
+        { ...dados.evento, congregacao: congregacao?.nome || nomeCongregacaoSelecionada },
+      ]));
+      setModalCriarVisivel(false);
+      setCriacaoRapidaVisivel(false);
+      setMensagemOperacao(dados.conflitoDetectado
+        ? 'Evento salvo com conflito: revise o marcador vermelho.'
+        : 'Evento adicionado ao planejamento.');
+      if (dados.conflitoDetectado) {
+        mostrarAviso('Conflito identificado',
+          'O evento foi salvo, mas existe outro evento da mesma congregação no mesmo período e horário.');
       }
     } catch (error) {
       console.error('Erro ao salvar rascunho:', error);
-      Alert.alert('Erro', 'Falha de conexão com o servidor.');
+      mostrarAviso('Erro', 'Falha de conexão com o servidor.');
+    } finally {
+      salvandoRef.current = false;
+      setSalvandoRascunho(false);
     }
   };
 
@@ -423,32 +447,41 @@ export default function TelaGestaoDatas() {
 
   const alterarMarcadorEvento = async (novoMarcador: string) => {
     if (!eventoAtivo) return;
+    const id = eventoAtivo.id;
+    const marcadorAnterior = eventoAtivo.marcador;
+
+    // Atualização otimista: o calendário muda imediatamente.
+    revisaoLocalRef.current += 1;
+    setEventosPlanejados(atuais => atuais.map(ev =>
+      ev.id === id ? { ...ev, marcador: novoMarcador } : ev
+    ));
+    setModalOpcoesVisivel(false);
+    setEventoAtivo(null);
 
     try {
-      const resp = await apiFetch(
-        `${API_URL}/gestao-datas/${eventoAtivo.id}/marcador`,
-        {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({
-            marcador: novoMarcador,
-          }),
-        }
-      );
-
-      if (resp.ok) {
-        setModalOpcoesVisivel(false);
-        setEventoAtivo(null);
-        await carregarDados();
-      } else {
-        Alert.alert('Erro', 'Não foi possível atualizar o marcador.');
+      const resp = await apiFetch(API_URL + '/gestao-datas/' + id + '/marcador', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + token,
+        },
+        body: JSON.stringify({ marcador: novoMarcador }),
+      });
+      if (!resp.ok) {
+        const dados = await resp.json().catch(() => ({}));
+        throw new Error(dados.erro || 'Não foi possível atualizar o marcador.');
       }
+      setMensagemOperacao('Marcador atualizado no planejamento.');
     } catch (error) {
+      // Se falhar, restaura o estado anterior sem recarregar a página.
+      revisaoLocalRef.current += 1;
+      setEventosPlanejados(atuais => atuais.map(ev =>
+        ev.id === id && ev.marcador === novoMarcador
+          ? { ...ev, marcador: marcadorAnterior }
+          : ev
+      ));
       console.error('Erro ao alterar marcador:', error);
-      Alert.alert('Erro', 'Falha de conexão.');
+      mostrarAviso('Erro', error instanceof Error ? error.message : 'Falha de conexão.');
     }
   };
 
@@ -456,75 +489,42 @@ export default function TelaGestaoDatas() {
   // EXCLUIR RASCUNHO
   // =====================================================
 
-  const excluirRascunho = async (id: number) => {
+  const excluirRascunho = (id: number) => {
     setModalOpcoesVisivel(false);
 
     const removerEvento = async () => {
+      const eventoAnterior = eventosPlanejados.find(ev => ev.id === id);
+
+      // Remove imediatamente da interface, preservando mês, ano e rolagem.
+      revisaoLocalRef.current += 1;
+      setEventosPlanejados(atuais => atuais.filter(ev => ev.id !== id));
+
       try {
-        const resp = await apiFetch(`${API_URL}/gestao-datas/${id}`, {
+        const resp = await apiFetch(API_URL + '/gestao-datas/' + id, {
           method: 'DELETE',
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+          headers: { Authorization: 'Bearer ' + token },
         });
-
-        if (resp.ok) {
-          await carregarDados();
-
-          if (Platform.OS === 'web') {
-            window.alert('Evento removido do planejamento.');
-          } else {
-            Alert.alert('Sucesso', 'Evento removido do planejamento.');
-          }
-        } else {
-          const dados = await resp.json();
-
-          if (Platform.OS === 'web') {
-            window.alert(
-              dados.erro || 'Não foi possível remover o evento.'
-            );
-          } else {
-            Alert.alert(
-              'Erro',
-              dados.erro || 'Não foi possível remover o evento.'
-            );
-          }
+        if (!resp.ok) {
+          const dados = await resp.json().catch(() => ({}));
+          throw new Error(dados.erro || 'Não foi possível remover o evento.');
         }
+        setMensagemOperacao('Evento removido do planejamento.');
       } catch (error) {
-        console.error('Erro ao excluir rascunho:', error);
-
-        if (Platform.OS === 'web') {
-          window.alert('Falha de conexão com o servidor.');
-        } else {
-          Alert.alert('Erro', 'Falha de conexão.');
+        // Reverte somente o evento afetado se a API rejeitar a exclusão.
+        if (eventoAnterior) {
+          revisaoLocalRef.current += 1;
+          setEventosPlanejados(atuais => atuais.some(ev => ev.id === id)
+            ? atuais
+            : ordenarEventos([...atuais, eventoAnterior]));
         }
+        console.error('Erro ao excluir rascunho:', error);
+        mostrarAviso('Erro', error instanceof Error ? error.message : 'Falha de conexão.');
       }
     };
 
-    if (Platform.OS === 'web') {
-      const confirmar = window.confirm(
-        'Deseja realmente remover este evento do planejamento?'
-      );
-
-      if (confirmar) {
-        await removerEvento();
-      }
-
-      return;
-    }
-
-    Alert.alert(
-      'Remover Evento',
-      'Deseja remover este evento do planejamento?',
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Remover',
-          style: 'destructive',
-          onPress: removerEvento,
-        },
-      ]
-    );
+    // A própria opção "Remover do Planejamento" inicia a exclusão.
+    // Sem confirmação bloqueante na Web ou no Android.
+    void removerEvento();
   };
 
   // =====================================================
@@ -532,93 +532,73 @@ export default function TelaGestaoDatas() {
   // =====================================================
 
   const publicarNaAgendaGeral = () => {
-    const totalRevisar = eventosPlanejados.filter(
-      (ev) => ev.marcador === 'REVISAR'
-    ).length;
+    if (publicandoRef.current || eventosPlanejados.length === 0) return;
 
-    const totalConflito = eventosPlanejados.filter(
-      (ev) => ev.marcador === 'CONFLITO'
-    ).length;
+    const executarPublicacao = async (confirmarConflitos = false) => {
+      if (publicandoRef.current) return;
+      publicandoRef.current = true;
+      setPublicando(true);
+      const idsPublicados = new Set(eventosPlanejados.map(ev => ev.id));
+      let confirmacaoNecessaria: any = null;
 
-    let mensagemAviso =
-      'Deseja publicar todos os eventos organizados na Agenda? Após a publicação, eles ficarão disponíveis na Agenda geral.';
-
-    if (totalRevisar > 0 || totalConflito > 0) {
-      mensagemAviso =
-        'ATENÇÃO: Existem eventos pendentes de revisão antes da publicação:\n\n';
-
-      if (totalRevisar > 0) {
-        mensagemAviso += `🟡 ${totalRevisar} evento(s) para revisar\n`;
-      }
-
-      if (totalConflito > 0) {
-        mensagemAviso += `🔴 ${totalConflito} evento(s) com conflito/atenção\n`;
-      }
-
-      mensagemAviso +=
-        '\nDeseja prosseguir com a publicação mesmo assim?';
-    }
-
-    const executarPublicacao = async () => {
       try {
         const resp = await apiFetch(`${API_URL}/gestao-datas/publicar`, {
           method: 'POST',
           headers: {
+            'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
+          body: JSON.stringify({ confirmar_conflitos: confirmarConflitos }),
         });
 
-        const dados = await resp.json();
+        const dados = await resp.json().catch(() => ({}));
 
         if (resp.ok) {
-          await carregarDados();
-
-          if (Platform.OS === 'web') {
-            window.alert(dados.mensagem || 'Eventos publicados com sucesso!');
-          } else {
-            Alert.alert(
-              'Sucesso',
-              dados.mensagem || 'Eventos publicados com sucesso!'
-            );
-          }
+          revisaoLocalRef.current += 1;
+          setEventosPlanejados(atuais => atuais.filter(ev => !idsPublicados.has(ev.id)));
+          setMensagemOperacao(dados.mensagem || 'Eventos publicados com sucesso!');
+        } else if (resp.status === 409 && dados.codigo === 'CONFIRMACAO_CONFLITOS_NECESSARIA') {
+          confirmacaoNecessaria = dados;
         } else {
-          if (Platform.OS === 'web') {
-            window.alert(dados.erro || 'Falha ao publicar.');
-          } else {
-            Alert.alert('Erro', dados.erro || 'Falha ao publicar.');
-          }
+          mostrarAviso('Erro', dados.erro || 'Falha ao publicar.');
         }
       } catch (error) {
         console.error('Erro ao publicar:', error);
+        mostrarAviso('Erro', 'Falha de conexão com o servidor.');
+      } finally {
+        publicandoRef.current = false;
+        setPublicando(false);
+      }
 
-        if (Platform.OS === 'web') {
-          window.alert('Falha de conexão com o servidor.');
-        } else {
-          Alert.alert('Erro', 'Falha de conexão.');
-        }
+      if (confirmacaoNecessaria) {
+        const { resumo = {}, conflitos = [] } = confirmacaoNecessaria;
+        showDialog({
+          title: 'Conflitos ou pendências de publicação',
+          message: 'O servidor encontrou situações que exigem sua autorização. Verifique os eventos e as datas abaixo antes de prosseguir.',
+          details: [
+            { label: 'Sobreposições encontradas', value: resumo.sobreposicoesEncontradas || 0 },
+            { label: 'Eventos para revisar', value: resumo.revisar || 0 },
+            { label: 'Marcados como conflito', value: resumo.marcadosConflito || 0 },
+          ],
+          conflicts: conflitos,
+          buttons: [
+            { text: 'Voltar e revisar', style: 'cancel' },
+            { text: 'Publicar mesmo assim', style: 'destructive',
+              onPress: () => void executarPublicacao(true) },
+          ],
+        });
       }
     };
 
-    if (Platform.OS === 'web') {
-      const confirmar = window.confirm(mensagemAviso);
-
-      if (confirmar) {
-        executarPublicacao();
-      }
-
-      return;
-    }
-
-    Alert.alert('Publicar na Agenda', mensagemAviso, [
-      {
-        text: 'Revisar Eventos',
-        style: 'cancel',
-      },
-      {
-        text: 'Publicar Assim Mesmo',
-        onPress: executarPublicacao,
-      },
-    ]);
+    const aviso = 'Publicar os eventos planejados na Agenda geral? Os possíveis conflitos serão conferidos pelo servidor antes da publicação.';
+    showDialog({
+      title: 'Publicar na Agenda',
+      message: aviso,
+      buttons: [
+        { text: 'Cancelar', style: 'cancel' },
+        { text: 'Verificar e publicar', onPress: () => void executarPublicacao() },
+      ],
+    });
   };
 
   // =====================================================
@@ -1218,12 +1198,21 @@ export default function TelaGestaoDatas() {
 
           <TouchableOpacity
             onPress={publicarNaAgendaGeral}
-            style={styles.publishHeaderBtn}
+            disabled={publicando || eventosPlanejados.length === 0}
+            style={[styles.publishHeaderBtn, publicando && { opacity: 0.6 }]}
           >
             <Ionicons name="rocket-outline" size={21} color="#fff" />
           </TouchableOpacity>
         </View>
       </View>
+
+      {mensagemOperacao ? (
+        <View style={{ backgroundColor: '#E2EAE9', paddingVertical: 8, paddingHorizontal: 16 }}>
+          <Text accessibilityRole="alert" style={{ color: '#2A4B4C', fontWeight: '600' }}>
+            {mensagemOperacao}
+          </Text>
+        </View>
+      ) : null}
 
       {/* NAVEGAÇÃO */}
 
@@ -1386,7 +1375,8 @@ export default function TelaGestaoDatas() {
         </View>
 
         <TouchableOpacity
-          style={styles.publishButton}
+          style={[styles.publishButton, publicando && { opacity: 0.6 }]}
+          disabled={publicando || eventosPlanejados.length === 0}
           onPress={publicarNaAgendaGeral}
         >
           <Ionicons
@@ -1396,7 +1386,7 @@ export default function TelaGestaoDatas() {
             style={{ marginRight: 8 }}
           />
           <Text style={styles.publishButtonText}>
-            {isDesktop ? 'Publicar na Agenda' : 'Publicar na Agenda Geral'}
+            {publicando ? 'Publicando...' : isDesktop ? 'Publicar na Agenda' : 'Publicar na Agenda Geral'}
           </Text>
         </TouchableOpacity>
       </View>
@@ -1568,10 +1558,13 @@ export default function TelaGestaoDatas() {
                 </TouchableOpacity>
 
                 <TouchableOpacity
-                  style={styles.saveBtnModal}
-                  onPress={() => salvarEventoRascunho()}
+                  style={[styles.saveBtnModal, salvandoRascunho && { opacity: 0.6 }]}
+                  disabled={salvandoRascunho}
+                  onPress={() => void salvarEventoRascunho()}
                 >
-                  <Text style={styles.saveBtnText}>Adicionar Evento</Text>
+                  <Text style={styles.saveBtnText}>
+                    {salvandoRascunho ? 'Salvando...' : 'Adicionar Evento'}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -1715,8 +1708,14 @@ export default function TelaGestaoDatas() {
                 <TouchableOpacity style={styles.quickCreateCancel} onPress={() => setCriacaoRapidaVisivel(false)}>
                   <Text style={styles.quickCreateCancelText}>Cancelar</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.quickCreateSave} onPress={salvarCriacaoRapida}>
-                  <Text style={styles.quickCreateSaveText}>Salvar</Text>
+                <TouchableOpacity
+                  style={[styles.quickCreateSave, salvandoRascunho && { opacity: 0.6 }]}
+                  disabled={salvandoRascunho}
+                  onPress={salvarCriacaoRapida}
+                >
+                  <Text style={styles.quickCreateSaveText}>
+                    {salvandoRascunho ? 'Salvando...' : 'Salvar'}
+                  </Text>
                 </TouchableOpacity>
               </View>
             </ScrollView>
@@ -1994,7 +1993,7 @@ export default function TelaGestaoDatas() {
                   minuto < 0 ||
                   minuto > 59
                 ) {
-                  return Alert.alert(
+                  return mostrarDialogo(
                     'Horário inválido',
                     'Informe uma hora entre 00 e 23 e minutos entre 00 e 59.'
                   );

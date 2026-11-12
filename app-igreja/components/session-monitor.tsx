@@ -5,7 +5,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { canManage, getSessionToken, refreshSession, subscribeSession, type SessionUser } from '@/services/session';
 
 const managerRoutes = new Set(['/criar-evento', '/editar-evento', '/criar-post', '/gestao-usuarios', '/usuarios-congregacao']);
-const publicRoutes = new Set(['/', '/login', '/registro']);
+const publicRoutes = new Set(['/', '/login', '/registro', '/recuperar-senha']);
 
 function semAcessoARota(pathname: string, user: SessionUser) {
   if (pathname === '/gestao-datas') {

@@ -192,6 +192,15 @@ export default function TelaLogin() {
               </View>
             </View>
 
+            <TouchableOpacity
+              style={{ alignSelf: 'flex-end', marginBottom: 12, paddingVertical: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Esqueci minha senha"
+              onPress={() => router.push({ pathname: '/recuperar-senha', params: { email: email.trim() } })}
+            >
+              <Text style={{ color: cores.verde, fontSize: 14, fontWeight: '700' }}>Esqueci minha senha</Text>
+            </TouchableOpacity>
+
             {/* === NOVO BOTÃO DE MANTER CONECTADO === */}
             <TouchableOpacity 
               style={styles.checkboxContainer} 

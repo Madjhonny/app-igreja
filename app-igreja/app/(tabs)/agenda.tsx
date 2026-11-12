@@ -1,7 +1,7 @@
-import { authenticatedFetch, canManage, getStoredUser } from '@/services/session';
+import { apiFetch, authenticatedFetch, canManage, getStoredUser } from '@/services/session';
 import { useSessionUser } from '@/hooks/use-session-user';
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, Modal, Alert, ActivityIndicator, Animated, Easing, Dimensions } from 'react-native';
+import React, { useState, useCallback, useEffect, useMemo, useRef } from 'react';
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, Modal, ActivityIndicator, Animated, Easing, Dimensions, Platform } from 'react-native';
 import type { GestureResponderEvent } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -25,6 +25,7 @@ const TAMANHO_MARCA = 36; // altura/diâmetro da marcação de eventos (limitada
 const DESLOCAMENTOS_MESES = [-2, -1, 0, 1, 2] as const;
 
 type DiaDoMes = { dia: number; dataFormatada: string };
+type CongregacaoFiltro = { id: number; nome: string };
 
 // Mesma lógica de antes, agora parametrizada por mês/ano para poder desenhar os meses vizinhos
 const gerarDiasDoMes = (ano: number, mes: number): (DiaDoMes | null)[] => {
@@ -133,14 +134,67 @@ export default function TelaAgenda() {
   const [anoAtual, setAnoAtual] = useState(new Date().getFullYear());
   const [eventosDoMes, setEventosDoMes] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(false);
+
   const [erroCarregamento, setErroCarregamento] = useState('');
+  const [congregacoes, setCongregacoes] = useState<CongregacaoFiltro[]>([]);
+  const [congregacaoFiltrada, setCongregacaoFiltrada] = useState<number | null>(null);
+  const [modalFiltroVisivel, setModalFiltroVisivel] = useState(false);
+  const [carregandoCongregacoes, setCarregandoCongregacoes] = useState(false);
+  const [erroCongregacoes, setErroCongregacoes] = useState('');
+
+  // Mantém os filtros locais: trocar a congregação não refaz a requisição de eventos.
+  const eventosFiltrados = useMemo(
+    () => congregacaoFiltrada === null
+      ? eventosDoMes
+      : eventosDoMes.filter(evento => Number(evento.congregacao_id) === congregacaoFiltrada),
+    [eventosDoMes, congregacaoFiltrada],
+  );
+  const nomeCongregacaoFiltrada = congregacaoFiltrada === null
+    ? 'Todas as congregações'
+    : congregacoes.find(item => item.id === congregacaoFiltrada)?.nome
+      || eventosDoMes.find(evento => Number(evento.congregacao_id) === congregacaoFiltrada)?.congregacao
+      || 'Congregação selecionada';
 
   // Garante que só a resposta da busca mais recente seja aplicada (evita corrida em trocas rápidas de mês)
   const ultimaBuscaRef = useRef(0);
 
+  const ultimaBuscaCongregacoesRef = useRef(0);
+
+  const buscarCongregacoes = useCallback(async () => {
+    const buscaAtual = ++ultimaBuscaCongregacoesRef.current;
+    setCarregandoCongregacoes(true);
+    setErroCongregacoes('');
+    try {
+      const resposta = await apiFetch('/congregacoes');
+      if (!resposta.ok) throw new Error('Falha na consulta de congregações.');
+      const dados: unknown = await resposta.json();
+      if (!Array.isArray(dados)) throw new Error('Lista inválida de congregações.');
+      const lista: CongregacaoFiltro[] = dados
+        .filter(item => Number.isSafeInteger(Number(item?.id)) && Number(item.id) > 0 &&
+          typeof item?.nome === 'string' && item.nome.trim().length > 0)
+        .map(item => ({ id: Number(item.id), nome: String(item.nome) }));
+      if (buscaAtual === ultimaBuscaCongregacoesRef.current) setCongregacoes(lista);
+    } catch {
+      if (buscaAtual === ultimaBuscaCongregacoesRef.current) {
+        setErroCongregacoes('Não foi possível carregar as congregações. Tente novamente.');
+      }
+    } finally {
+      if (buscaAtual === ultimaBuscaCongregacoesRef.current) setCarregandoCongregacoes(false);
+    }
+  }, []);
+
+  useFocusEffect(useCallback(() => {
+    void buscarCongregacoes();
+    return () => { ultimaBuscaCongregacoesRef.current++; };
+  }, [buscarCongregacoes]));
+
   // Estados do Modal de Detalhes do Evento
   const [modalDetalhesVisivel, setModalDetalhesVisivel] = useState(false);
   const [eventoSelecionado, setEventoSelecionado] = useState<any>(null);
+  const [confirmandoExclusao, setConfirmandoExclusao] = useState(false);
+  const [excluindoEvento, setExcluindoEvento] = useState(false);
+  const [erroExclusao, setErroExclusao] = useState('');
+  const [avisoAgenda, setAvisoAgenda] = useState('');
 
   const carregarUsuario = useCallback(async () => {
     const user = await getStoredUser();
@@ -208,7 +262,7 @@ export default function TelaAgenda() {
       toValue: valor,
       duration: duracao,
       easing: Easing.out(Easing.cubic),
-      useNativeDriver: true,
+      useNativeDriver: Platform.OS !== 'web',
     }).start();
   }, [trilhoX]);
 
@@ -286,34 +340,53 @@ export default function TelaAgenda() {
 
   const abrirDetalhesEvento = (evento: any) => {
     setEventoSelecionado(evento);
+    setConfirmandoExclusao(false);
+    setErroExclusao('');
     setModalDetalhesVisivel(true);
   };
 
-  const confirmarExclusao = (eventoId: number) => {
-    Alert.alert(
-      "Excluir Evento",
-      "Tem certeza que deseja excluir este evento?",
-      [
-        { text: "Cancelar", style: "cancel" },
-        { text: "Excluir", style: "destructive", onPress: () => excluirEvento(eventoId) }
-      ]
-    );
+  const cancelarExclusao = () => {
+    if (excluindoEvento) return;
+    setConfirmandoExclusao(false);
+    setErroExclusao('');
+  };
+
+  const fecharDetalhes = () => {
+    if (excluindoEvento) return;
+    if (confirmandoExclusao) {
+      cancelarExclusao();
+      return;
+    }
+    setModalDetalhesVisivel(false);
+  };
+
+  const confirmarExclusao = () => {
+    setErroExclusao('');
+    setConfirmandoExclusao(true);
   };
 
   const excluirEvento = async (eventoId: number) => {
+    if (excluindoEvento) return;
+    setExcluindoEvento(true);
+    setErroExclusao('');
     try {
       const resposta = await authenticatedFetch(`/eventos/${eventoId}`, { method: 'DELETE' });
 
       if (resposta.ok) {
+        // Atualiza a agenda local sem exibir outro modal nem mostrar carregamento global.
+        setEventosDoMes(atuais => atuais.filter(ev => Number(ev.id) !== Number(eventoId)));
         setModalDetalhesVisivel(false);
-        void buscarEventosDoMes(mesAtual + 1, anoAtual);
-        Alert.alert("Sucesso", "Evento excluído com sucesso!");
+        setConfirmandoExclusao(false);
+        setEventoSelecionado(null);
+        setAvisoAgenda('Evento excluído com sucesso!');
       } else {
-        const dados = await resposta.json();
-        Alert.alert("Erro", dados.erro || "Não foi possível excluir o evento.");
+        const dados = await resposta.json().catch(() => ({}));
+        setErroExclusao(dados.erro || 'Não foi possível excluir o evento.');
       }
     } catch {
-      Alert.alert("Erro", "Falha de conexão com o servidor.");
+      setErroExclusao('Falha de conexão com o servidor. Tente novamente.');
+    } finally {
+      setExcluindoEvento(false);
     }
   };
 
@@ -322,8 +395,18 @@ export default function TelaAgenda() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Agenda da Igreja</Text>
+        <Text style={styles.headerTitle}>Agenda</Text>
       </View>
+
+      {avisoAgenda ? (
+        <View style={styles.feedbackBar}>
+          <Ionicons name="checkmark-circle-outline" size={19} color={cores.verde} />
+          <Text accessibilityRole="alert" style={styles.feedbackText}>{avisoAgenda}</Text>
+          <TouchableOpacity accessibilityLabel="Fechar aviso" onPress={() => setAvisoAgenda('')}>
+            <Ionicons name="close" size={18} color={cores.verde} />
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
       <View style={styles.painel}>
         <ScrollView
@@ -332,7 +415,34 @@ export default function TelaAgenda() {
           scrollEnabled={rolagemHabilitada}
         >
           <View style={styles.conteudo}>
-        
+            {/* Um único filtro controla a marcação do calendário e a lista do mês. */}
+            <View style={styles.filtroContainer}>
+              <Text style={styles.filtroLabel}>Filtrar por congregação</Text>
+              <TouchableOpacity
+                style={styles.filtroSelector}
+                accessibilityRole="button"
+                accessibilityLabel={`Filtrar por congregação. ${nomeCongregacaoFiltrada}`}
+                accessibilityHint="Abre a lista de congregações"
+                onPress={() => setModalFiltroVisivel(true)}
+                activeOpacity={0.8}
+              >
+                <Ionicons name="business-outline" size={20} color={cores.verde} />
+                <Text numberOfLines={1} style={styles.filtroTexto}>{nomeCongregacaoFiltrada}</Text>
+                <Ionicons name="chevron-down" size={19} color={cores.verde} />
+              </TouchableOpacity>
+              {congregacaoFiltrada !== null && (
+                <TouchableOpacity
+                  style={styles.limparFiltro}
+                  accessibilityRole="button"
+                  accessibilityLabel="Limpar filtro de congregação"
+                  onPress={() => setCongregacaoFiltrada(null)}
+                >
+                  <Ionicons name="close-circle-outline" size={17} color={cores.verde} />
+                  <Text style={styles.limparFiltroTexto}>Mostrar todas as congregações</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+
             {/* CALENDÁRIO ESTÁVEL E SINCRONIZADO */}
             <View
               style={styles.calendarCard}
@@ -375,7 +485,7 @@ export default function TelaAgenda() {
                         key={indice}
                         ano={Math.floor(indice / 12)}
                         mes={indice % 12}
-                        eventos={eventosDoMes}
+                        eventos={eventosFiltrados}
                         largura={larguraCalendario}
                         esquerda={(indice - indiceAncora) * larguraCalendario}
                       />
@@ -411,8 +521,16 @@ export default function TelaAgenda() {
                 <Ionicons name="calendar-outline" size={40} color={cores.neutro} />
                 <Text style={styles.emptyText}>Nenhum evento cadastrado neste mês.</Text>
               </View>
+            ) : eventosFiltrados.length === 0 ? (
+              <View style={styles.emptyBox}>
+                <Ionicons name="filter-outline" size={40} color={cores.neutro} />
+                <Text style={styles.emptyText}>Nenhum evento desta congregação neste mês.</Text>
+                <TouchableOpacity style={styles.retryButton} onPress={() => setCongregacaoFiltrada(null)}>
+                  <Text style={styles.retryButtonText}>Mostrar todas as congregações</Text>
+                </TouchableOpacity>
+              </View>
             ) : (
-              eventosDoMes.map((evento) => {
+              eventosFiltrados.map((evento) => {
                 const dataInicioFormatada = formatarDataExibicao(evento.data_inicio);
                 const dataFimFormatada = formatarDataExibicao(evento.data_fim);
                 const periodoExibicao = dataFimFormatada && dataFimFormatada !== dataInicioFormatada 
@@ -447,11 +565,121 @@ export default function TelaAgenda() {
         </ScrollView>
       </View>
 
+      {/* Modal exclusivo do filtro; não se sobrepõe ao modal de detalhes. */}
+      <Modal
+        visible={modalFiltroVisivel}
+        animationType="fade"
+        transparent
+        onRequestClose={() => setModalFiltroVisivel(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalFiltro}>
+            <View style={styles.filtroModalHeader}>
+              <Text style={styles.filtroModalTitulo}>Escolha uma congregação</Text>
+              <TouchableOpacity
+                accessibilityRole="button"
+                accessibilityLabel="Fechar filtro"
+                style={styles.closeModalButton}
+                onPress={() => setModalFiltroVisivel(false)}
+              >
+                <Ionicons name="close" size={20} color={cores.verde} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.filtroModalDescricao}>O filtro será aplicado ao calendário e às atividades do mês.</Text>
+            <ScrollView style={styles.filtroModalLista} keyboardShouldPersistTaps="handled">
+              <TouchableOpacity
+                style={styles.filtroOpcao}
+                accessibilityRole="radio"
+                accessibilityState={{ checked: congregacaoFiltrada === null }}
+                onPress={() => {
+                  setCongregacaoFiltrada(null);
+                  setModalFiltroVisivel(false);
+                }}
+              >
+                <Ionicons name={congregacaoFiltrada === null ? 'radio-button-on' : 'radio-button-off'} size={21} color={cores.verde} />
+                <Text style={styles.filtroOpcaoTexto}>Todas as congregações</Text>
+              </TouchableOpacity>
+              {congregacoes.map(congregacao => (
+                <TouchableOpacity
+                  key={congregacao.id}
+                  style={styles.filtroOpcao}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: congregacaoFiltrada === congregacao.id }}
+                  onPress={() => {
+                    setCongregacaoFiltrada(congregacao.id);
+                    setModalFiltroVisivel(false);
+                  }}
+                >
+                  <Ionicons
+                    name={congregacaoFiltrada === congregacao.id ? 'radio-button-on' : 'radio-button-off'}
+                    size={21}
+                    color={cores.verde}
+                  />
+                  <Text style={styles.filtroOpcaoTexto}>{congregacao.nome}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+            {carregandoCongregacoes ? (
+              <ActivityIndicator size="small" color={cores.verde} style={{ marginTop: 14 }} />
+            ) : erroCongregacoes ? (
+              <View style={styles.filtroErro}>
+                <Text accessibilityRole="alert" style={styles.filtroErroTexto}>{erroCongregacoes}</Text>
+                <TouchableOpacity accessibilityRole="button" onPress={() => void buscarCongregacoes()}>
+                  <Text style={styles.filtroTentarNovamente}>Tentar novamente</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+          </View>
+        </View>
+      </Modal>
+
       {/* MODAL DE DETALHES E PERMISSÃO DE EXCLUSÃO */}
-      <Modal visible={modalDetalhesVisivel} animationType="slide" transparent={true} onRequestClose={() => setModalDetalhesVisivel(false)}>
+      <Modal visible={modalDetalhesVisivel} animationType="slide" transparent={true} onRequestClose={fecharDetalhes}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
-            <TouchableOpacity accessibilityLabel="Fechar detalhes" style={styles.closeModalButton} onPress={() => setModalDetalhesVisivel(false)} activeOpacity={0.7}>
+            {confirmandoExclusao ? (
+              <>
+                <View style={styles.confirmacaoIcone}>
+                  <Ionicons name="trash-outline" size={25} color={cores.erro} />
+                </View>
+                <Text style={styles.modalEventTitle}>Excluir evento?</Text>
+                <Text style={styles.confirmacaoMensagem}>
+                  Tem certeza que deseja excluir o evento {eventoSelecionado?.titulo} da agenda?
+                </Text>
+                {erroExclusao ? (
+                  <Text accessibilityRole="alert" style={styles.confirmacaoErro}>{erroExclusao}</Text>
+                ) : null}
+                <View style={styles.managementActions}>
+                  <TouchableOpacity
+                    style={styles.cancelButtonModal}
+                    onPress={cancelarExclusao}
+                    disabled={excluindoEvento}
+                    accessibilityRole="button"
+                  >
+                    <Text style={styles.cancelButtonText}>Cancelar</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.deleteButtonModal, excluindoEvento && { opacity: 0.6 }]}
+                    onPress={() => {
+                      if (eventoSelecionado?.id != null) void excluirEvento(eventoSelecionado.id);
+                    }}
+                    disabled={excluindoEvento}
+                    accessibilityRole="button"
+                  >
+                    {excluindoEvento ? (
+                      <ActivityIndicator color={cores.branco} />
+                    ) : (
+                      <Ionicons name="trash-outline" size={18} color={cores.branco} style={{ marginRight: 8 }} />
+                    )}
+                    <Text style={styles.deleteButtonText}>
+                      {excluindoEvento ? 'Excluindo...' : 'Excluir'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : (
+              <>
+                <TouchableOpacity accessibilityLabel="Fechar detalhes" style={styles.closeModalButton} onPress={fecharDetalhes} activeOpacity={0.7}>
               <Ionicons name="close" size={20} color={cores.verde} />
             </TouchableOpacity>
 
@@ -502,11 +730,13 @@ export default function TelaAgenda() {
                   <Ionicons name="create-outline" size={18} color={cores.branco} style={{ marginRight: 8 }} />
                   <Text style={styles.deleteButtonText}>Editar</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.deleteButtonModal} onPress={() => confirmarExclusao(eventoSelecionado.id)} activeOpacity={0.85}>
+                <TouchableOpacity style={styles.deleteButtonModal} onPress={confirmarExclusao} activeOpacity={0.85}>
                   <Ionicons name="trash-outline" size={18} color={cores.branco} style={{ marginRight: 8 }} />
                   <Text style={styles.deleteButtonText}>Excluir</Text>
                 </TouchableOpacity>
               </View>
+            )}
+              </>
             )}
           </View>
         </View>
@@ -522,11 +752,32 @@ const styles = StyleSheet.create({
   // Cabeçalho
   header: { backgroundColor: cores.verde, paddingTop: 52, paddingBottom: 26, alignItems: 'center' },
   headerTitle: { color: cores.bege, fontSize: 20, fontWeight: '700', letterSpacing: 0.3 },
+  feedbackBar: { backgroundColor: cores.suave, flexDirection: 'row', alignItems: 'center', gap: 9, paddingHorizontal: 20, paddingVertical: 11 },
+  feedbackText: { flex: 1, color: cores.verde, fontSize: 14, fontWeight: '600' },
 
   // Painel claro com cantos superiores arredondados sobre o cabeçalho verde
   painel: { flex: 1, backgroundColor: cores.bege, borderTopLeftRadius: 28, borderTopRightRadius: 28, overflow: 'hidden' },
   scrollContent: { paddingHorizontal: 20, paddingTop: 24, paddingBottom: 80 },
   conteudo: { width: '100%', maxWidth: 640, alignSelf: 'center' },
+  filtroContainer: { marginBottom: 18 },
+  filtroLabel: { fontSize: 13, fontWeight: '700', color: cores.verde, marginBottom: 8 },
+  filtroSelector: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: cores.branco,
+    borderWidth: 1, borderColor: cores.suave, borderRadius: 14, paddingHorizontal: 14, minHeight: 50 },
+  filtroTexto: { flex: 1, fontSize: 15, fontWeight: '600', color: cores.verde },
+  limparFiltro: { flexDirection: 'row', alignItems: 'center', gap: 6, alignSelf: 'flex-start', paddingTop: 10, paddingBottom: 2 },
+  limparFiltroTexto: { fontSize: 13, fontWeight: '600', color: cores.verdeTexto },
+  modalFiltro: { width: '100%', maxWidth: 450, maxHeight: '78%', backgroundColor: cores.bege, borderRadius: 22, padding: 20 },
+  filtroModalHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  filtroModalTitulo: { flex: 1, fontSize: 18, fontWeight: '700', color: cores.verde },
+  filtroModalDescricao: { fontSize: 13, lineHeight: 19, color: cores.verdeTexto, marginTop: 8, marginBottom: 10 },
+  filtroModalLista: { maxHeight: 320, flexShrink: 1 },
+  filtroOpcao: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 13,
+    paddingHorizontal: 10, borderBottomWidth: 1, borderBottomColor: cores.suave },
+  filtroOpcaoTexto: { flex: 1, fontSize: 15, color: cores.verde, fontWeight: '500' },
+  filtroErro: { paddingVertical: 12 },
+  filtroErroTexto: { fontSize: 13, color: cores.erro, marginBottom: 10 },
+  filtroTentarNovamente: { fontSize: 14, fontWeight: '700', color: cores.verde },
+
   
   // Calendário
   calendarCard: {
@@ -622,5 +873,10 @@ const styles = StyleSheet.create({
   managementActions: { flexDirection: 'row', gap: 10 },
   editButtonModal: { flex: 1, backgroundColor: cores.verde, height: 52, borderRadius: 14, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
   deleteButtonModal: { flex: 1, backgroundColor: cores.erro, height: 52, borderRadius: 14, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
+  cancelButtonModal: { flex: 1, backgroundColor: cores.suave, height: 52, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
+  cancelButtonText: { color: cores.verde, fontSize: 16, fontWeight: '700' },
+  confirmacaoIcone: { alignSelf: 'center', backgroundColor: '#FFE8E9', borderRadius: 28, width: 56, height: 56, alignItems: 'center', justifyContent: 'center', marginBottom: 12 },
+  confirmacaoMensagem: { color: cores.verde, fontSize: 15, lineHeight: 22, textAlign: 'center', marginBottom: 20 },
+  confirmacaoErro: { color: cores.erro, fontSize: 14, marginBottom: 16, textAlign: 'center' },
   deleteButtonText: { color: cores.branco, fontSize: 16, fontWeight: '700' }
 });

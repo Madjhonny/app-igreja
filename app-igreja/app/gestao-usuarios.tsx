@@ -1,11 +1,13 @@
+import { useAppDialog } from '@/components/app-dialog';
 import { useSessionUser } from '@/hooks/use-session-user';
 import { authenticatedFetch, canManage, getStoredUser, getSessionToken } from '@/services/session';
 import React, { useState, useCallback } from 'react';
-import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { StyleSheet, Text, View, ScrollView, TouchableOpacity, ActivityIndicator } from 'react-native';
 import { router, useFocusEffect, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 export default function TelaGestaoUsuarios() {
+  const { alert: mostrarDialogo } = useAppDialog();
   const [usuarios, setUsuarios] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(false);
   const [usuarioLogado, setUsuarioLogado] = useSessionUser();
@@ -34,7 +36,7 @@ export default function TelaGestaoUsuarios() {
         router.back();
       }
     } catch {
-      Alert.alert('Erro', 'Falha na conexão com o servidor.');
+      mostrarDialogo('Erro', 'Falha na conexão com o servidor.');
     } finally {
       setCarregando(false);
     }

@@ -1,11 +1,13 @@
+import { useAppDialog } from '@/components/app-dialog';
 import { authenticatedFetch } from '@/services/session';
 import React, { useState } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Alert, ActivityIndicator, Image, KeyboardAvoidingView, Platform, Modal } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Image, KeyboardAvoidingView, Platform, Modal } from 'react-native';
 import { router, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 
 export default function TelaCriarPost() {
+  const { alert: mostrarDialogo } = useAppDialog();
   const [titulo, setTitulo] = useState('');
   const [descricao, setDescricao] = useState('');
   const [local, setLocal] = useState('');
@@ -23,7 +25,7 @@ export default function TelaCriarPost() {
   const escolherMidia = async () => {
     const permissao = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permissao.granted) {
-      Alert.alert('Permissão negada', 'Precisamos de acesso à galeria para anexar uma imagem.');
+      mostrarDialogo('Permissão negada', 'Precisamos de acesso à galeria para anexar uma imagem.');
       return;
     }
 
@@ -37,12 +39,12 @@ export default function TelaCriarPost() {
     if (!resultado.canceled && resultado.assets[0]) {
       const asset = resultado.assets[0];
       if (!asset.base64) {
-        Alert.alert('Imagem inválida', 'Não foi possível preparar a imagem para envio.');
+        mostrarDialogo('Imagem inválida', 'Não foi possível preparar a imagem para envio.');
         return;
       }
       const tamanhoAproximado = Math.ceil(asset.base64.length * 0.75);
       if (tamanhoAproximado > 1_500_000) {
-        Alert.alert('Imagem muito grande', 'Escolha uma imagem de até 1,5 MB.');
+        mostrarDialogo('Imagem muito grande', 'Escolha uma imagem de até 1,5 MB.');
         return;
       }
       setTipoMidia('imagem');
@@ -65,7 +67,7 @@ export default function TelaCriarPost() {
 
   const confirmarDatas = () => {
     if (!dataInicio) {
-      Alert.alert("Atenção", "Selecione pelo menos a data de início do evento.");
+      mostrarDialogo("Atenção", "Selecione pelo menos a data de início do evento.");
       return;
     }
     if (!dataFim) {
@@ -112,7 +114,7 @@ export default function TelaCriarPost() {
 
   const publicarPost = async () => {
     if (!titulo || !midia || !dataInicio) {
-      return Alert.alert('Atenção', 'Preencha o Título, selecione uma Mídia e defina as Datas do Evento.');
+      return mostrarDialogo('Atenção', 'Preencha o Título, selecione uma Mídia e defina as Datas do Evento.');
     }
 
     const fimFinal = dataFim || dataInicio;
@@ -136,14 +138,14 @@ export default function TelaCriarPost() {
       const dados = await resposta.json();
 
       if (resposta.ok) {
-        Alert.alert('Sucesso', 'Publicação criada com sucesso!', [
+        mostrarDialogo('Sucesso', 'Publicação criada com sucesso!', [
           { text: 'OK', onPress: () => router.back() }
         ]);
       } else {
-        Alert.alert('Erro', dados.erro || 'Falha ao publicar no mural.');
+        mostrarDialogo('Erro', dados.erro || 'Falha ao publicar no mural.');
       }
     } catch {
-      Alert.alert('Erro', 'Não foi possível conectar ao servidor.');
+      mostrarDialogo('Erro', 'Não foi possível conectar ao servidor.');
     } finally {
       setCarregando(false);
     }
