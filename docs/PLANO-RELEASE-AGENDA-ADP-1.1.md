@@ -121,6 +121,21 @@ O conector Render disponível nesta revisão permite consultar serviço e deploy
 - Snapshot pré-migração preservado; restauração não executada.
 - **Não houve** deploy, atualização do Render, merge de PR, alteração de variáveis ou distribuição de APK. Permanece necessária autorização específica para cada uma dessas ações.
 
+## Revisão pré-deploy — API e Resend para demonstração
+
+- PR #11 permanece rascunho, sem merge. Verificação GitHub Actions do commit `3b69bdef7b`: API e aplicativo aprovados (66 testes automatizados na API).
+- Render `app-igreja`: deploy ativo ainda é `444970e134`, a partir de `main`; auto-deploy ativado; nenhuma alteração de serviço realizada nesta revisão.
+- Após migração autorizada `003_password_recovery.sql`, Neon production possui `usuarios.token_version`, `senha_recuperacoes`, índice de expiração e registro em `schema_migrations`.
+- Código atual de `POST /senha/solicitar-recuperacao`: retorna HTTP 503 quando `RESEND_API_KEY` ou `EMAIL_FROM` estiverem ausentes. Se o provedor recusar um destinatário, a API retorna mensagem genérica HTTP 202 para não revelar se o e-mail existe — **isso não comprova entrega**.
+- Captura anterior do painel Render não mostrou as variáveis `RESEND_API_KEY` ou `EMAIL_FROM`. Verificar se há grupo de ambiente vinculado antes de adicionar novas variáveis.
+- Para a demonstração privada sem domínio, o Resend `onboarding@resend.dev` só deve enviar à caixa da própria conta Resend, nunca assumir que outros convidados receberão o código.
+- **Ação manual sugerida:** em Render → serviço `app-igreja` → Environment, adicionar `RESEND_API_KEY` (segredo copiado diretamente da conta Resend) e `EMAIL_FROM=Agenda ADP <onboarding@resend.dev>`. Não revelar a API key no chat, no GitHub ou no frontend.
+- Escolher **Save only** ao salvar. Render documenta que isso salva a variável **sem iniciar deploy**; a configuração passa a vigorar no próximo deploy. Não selecionar Save and deploy nesta etapa.
+- Testes reais de e-mail com o backend hospedado só podem ocorrer após autorização específica para publicar a nova API. O remetente de demonstração não é uma solução para lançamento oficial.
+- Verificar a numeração da versão: `app.json` ainda declara `1.0.0`; o EAS usa `appVersionSource: remote`. Definir `1.1.0` e versão/código Android de maneira consistente antes de gerar a nova build, sem publicar APK neste momento.
+- [ ] Usuário confirmar que as duas variáveis foram configuradas no Render com Save only, sem compartilhar valores.
+- [ ] Usuário autorizar separadamente o merge/deploy da versão 1.1 no Render após checklist final.
+
 ## Sequência proposta para implantação futura (não executada)
 
 1. Congelar commit de release e conferir logs/CI.
