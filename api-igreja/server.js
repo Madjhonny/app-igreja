@@ -918,7 +918,7 @@ const criarLinkImagem = id => {
   return `/mural/${id}/imagem?exp=${expira}&sig=${assinaturaImagem(id, expira)}`;
 };
 const assinaturaImagemValida = (id, expira, assinatura) => {
-  if (!idValido(id) || typeof expira !== 'string' || !/^\\d{10}$/.test(expira) ||
+  if (!idValido(id) || typeof expira !== 'string' || !/^\d{10}$/.test(expira) ||
       typeof assinatura !== 'string' || !/^[a-f0-9]{64}$/.test(assinatura)) return false;
   const agora = Math.floor(Date.now() / 1000);
   const vencimento = Number(expira);
