@@ -169,4 +169,5 @@ Não realizar merge diretamente na `main` antes de fechar a homologação dos P0
 - Ajustado o card do feed na Web para uma coluna centralizada com largura máxima de 640 px; a largura no Android permanece inalterada.
 - Removida, somente na Web, a espera obrigatória pelo `onLayout` antes de montar o `FlatList` do fullscreen; a dimensão inicial da janela serve como fallback.
 - Animação de troca de mês na Agenda usa o driver JavaScript no navegador e o driver nativo no Android, evitando o aviso de `useNativeDriver`.
-- **Pendente de homologação:** confirmar fotos com proporções horizontal/vertical no feed, abertura do fullscreen, navegação vertical, retorno e rodapé em Web e Android. CI não substitui estes testes visuais.
+- **Homologação Web informada pelo usuário:** proporção das imagens corrigida, abertura em tela cheia funcionando e carrossel vertical funcionando; curtidas e comentários também haviam sido confirmados.
+- **Homologação Android pendente:** repetir exibição do mural, fullscreen, rolagem vertical, curtidas, comentários e retorno à aba anterior. CI não substitui estes testes visuais.
