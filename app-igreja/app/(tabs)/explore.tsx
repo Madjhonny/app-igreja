@@ -2,7 +2,7 @@ import { useAppDialog } from '@/components/app-dialog';
 import { apiUrl, authenticatedFetch, canInteract, canManage, refreshSession } from '@/services/session';
 import { useSessionUser } from '@/hooks/use-session-user';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, TextInput, Modal, ActivityIndicator, Dimensions, FlatList, RefreshControl, StatusBar, BackHandler, PixelRatio } from 'react-native';
+import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, TextInput, Modal, ActivityIndicator, Dimensions, FlatList, RefreshControl, StatusBar, BackHandler, PixelRatio, Platform } from 'react-native';
 import { router, useFocusEffect, useNavigation } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
