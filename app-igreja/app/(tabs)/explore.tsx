@@ -65,6 +65,8 @@ export default function TelaEventos() {
   // Medidas reais da área do fullscreen (cada slide ocupa exatamente uma "página")
   const [alturaPagina, setAlturaPagina] = useState(height);
   const [fullscreenMedido, setFullscreenMedido] = useState(false);
+  // Na Web, o onLayout inicial pode não disparar quando a camada é absoluta.
+  // A lista já pode usar a altura inicial da janela sem aguardar essa medição.
   // Índice do slide visível (usado como ponto de partida ao abrir e se a lista precisar ser recriada)
   const indiceAtualRef = useRef(0);
 
@@ -368,7 +370,7 @@ export default function TelaEventos() {
     const autorFoto = post.autor_foto;
 
     return (
-      <TouchableOpacity style={styles.postCard} activeOpacity={0.95} onPress={() => abrirFullscreenNoPost(index)}>
+      <TouchableOpacity style={[styles.postCard, Platform.OS === 'web' && styles.postCardWeb]} activeOpacity={0.95} onPress={() => abrirFullscreenNoPost(index)}>
         <View style={styles.postHeader}>
           <TouchableOpacity 
             style={styles.authorContainer} 
@@ -509,7 +511,7 @@ export default function TelaEventos() {
         }}
       >
         <StatusBar hidden={true} />
-        {fullscreenMedido && (
+        {(Platform.OS === 'web' || fullscreenMedido) && (
           <FlatList
             key={`fullscreen-${alturaPagina}`}
             ref={flatListRef}
@@ -838,6 +840,9 @@ const styles = StyleSheet.create({
 
   // Estilos Feed Normal
   postCard: { backgroundColor: '#fff', borderRadius: 12, marginBottom: 20, overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5, elevation: 2 },
+  // No navegador o feed deve ter largura de leitura, sem esticar fotos pela tela inteira.
+  // Em celulares preservamos o layout anterior.
+  postCardWeb: { width: '100%', maxWidth: 640, alignSelf: 'center' },
   postHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 12 },
   authorContainer: { flexDirection: 'row', alignItems: 'center', flex: 1 },
   authorAvatar: { width: 40, height: 40, borderRadius: 20, marginRight: 10, borderWidth: 1, borderColor: '#2A4B4C' },
