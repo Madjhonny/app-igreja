@@ -240,3 +240,54 @@ test('edição direta rejeita sobreposição com outro evento', async () => {
   assert.equal(db.committed, false);
   assert.equal(db.rolledBack, true);
 });
+
+test('conflitos do planejamento são independentes entre congregações', async () => {
+  const outro = { ...draft(11), congregacao_id: 20 };
+  const db = setup({ drafts: [draft(10), outro] });
+  const res = await db.call('post', '/gestao-datas/publicar');
+  assert.equal(res.code, 200);
+  assert.equal(res.data.quantidadePublicada, 2);
+  assert.equal(db.inserts, 2);
+  assert.equal(db.committed, true);
+  const locks = db.queries.filter(x => x.sql.includes('pg_advisory_xact_lock'));
+  assert.equal(locks.map(x => x.params[1]).join(','), '10,20');
+});
+
+test('evento publicado de outra congregação não bloqueia o planejamento', async () => {
+  const outro = { ...published(100), congregacao_id: 20 };
+  const db = setup({ drafts: [draft(10)], existing: [outro] });
+  const res = await db.call('post', '/gestao-datas/publicar');
+  assert.equal(res.code, 200);
+  assert.equal(db.inserts, 1);
+  assert.equal(db.committed, true);
+});
+
+test('conflito é detectado quando períodos de vários dias compartilham apenas a última data', async () => {
+  const primeiro = { ...draft(10, '2026-11-15'), data_fim: '2026-11-17' };
+  const segundo = draft(11, '2026-11-17');
+  const db = setup({ drafts: [primeiro, segundo] });
+  const res = await db.call('post', '/gestao-datas/publicar');
+  assert.equal(res.code, 409);
+  assert.equal(res.data.resumo.eventosEmConflito, 2);
+  assert.equal(res.data.conflitos[0].origem, 'PLANEJAMENTO');
+  assert.equal(db.inserts, 0);
+  assert.equal(db.rolledBack, true);
+});
+
+test('eventos com horários sobrepostos por apenas um minuto exigem confirmação', async () => {
+  const db = setup({ drafts: [draft(10), draft(11, '2026-11-15', '20:29')] });
+  const res = await db.call('post', '/gestao-datas/publicar');
+  assert.equal(res.code, 409);
+  assert.equal(res.data.resumo.sobreposicoesEncontradas, 1);
+  assert.equal(db.inserts, 0);
+});
+
+test('eventos de períodos consecutivos sem dia em comum não conflitam', async () => {
+  const primeiro = { ...draft(10, '2026-11-15'), data_fim: '2026-11-16' };
+  const segundo = draft(11, '2026-11-17');
+  const db = setup({ drafts: [primeiro, segundo] });
+  const res = await db.call('post', '/gestao-datas/publicar');
+  assert.equal(res.code, 200);
+  assert.equal(db.inserts, 2);
+  assert.equal(db.committed, true);
+});
