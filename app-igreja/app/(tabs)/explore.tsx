@@ -1,5 +1,5 @@
 import { useAppDialog } from '@/components/app-dialog';
-import { authenticatedFetch, canInteract, canManage, refreshSession } from '@/services/session';
+import { apiUrl, authenticatedFetch, canInteract, canManage, refreshSession } from '@/services/session';
 import { useSessionUser } from '@/hooks/use-session-user';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, TextInput, Modal, ActivityIndicator, Dimensions, FlatList, RefreshControl, StatusBar, BackHandler, PixelRatio } from 'react-native';
@@ -8,6 +8,9 @@ import { Ionicons } from '@expo/vector-icons';
 
 // Altura da janela usada apenas como valor inicial; no fullscreen a altura real é medida via onLayout
 const { height } = Dimensions.get('window');
+
+// Compatibilidade com URLs temporárias relativas da API e imagens antigas em Data URI.
+const origemImagem = (valor: string) => valor.startsWith('/') ? apiUrl(valor) : valor;
 
 // Guarda a proporção (altura / largura) real de cada imagem já carregada.
 // Assim, ao rolar o feed e a célula ser recriada, ela já nasce com a altura correta (sem "pulo").
@@ -109,7 +112,7 @@ export default function TelaEventos() {
     if (!isRefresh) setCarregando(true);
     setErroCarregamento('');
     try {
-      const resposta = await authenticatedFetch('/mural');
+      const resposta = await authenticatedFetch('/mural?midia=link');
       if (resposta.ok) {
         const dados = await resposta.json();
         setPosts(dados);
@@ -405,7 +408,7 @@ export default function TelaEventos() {
               </View>
             </View>
           ) : (
-            <ImagemFeed postId={post.id} uri={post.midia} />
+            <ImagemFeed postId={post.id} uri={origemImagem(post.midia)} />
           )
         ) : null}
 
@@ -442,7 +445,7 @@ export default function TelaEventos() {
                 <Text style={styles.videoTextLarge}>Vídeo indisponível nesta versão</Text>
               </View>
             ) : (
-              <Image source={{ uri: post.midia }} style={styles.fullscreenImage} resizeMode="contain" />
+              <Image source={{ uri: origemImagem(post.midia) }} style={styles.fullscreenImage} resizeMode="contain" />
             )
           ) : (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 }}>
