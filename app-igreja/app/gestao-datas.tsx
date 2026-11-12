@@ -8,6 +8,12 @@ import {
 import { router, Stack, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
+// Após refresh ou acesso direto, a pilha pode não ter uma tela anterior.
+const voltarParaGestaoDeContas = () => {
+  if (router.canGoBack()) router.back();
+  else router.replace('/gestao-usuarios');
+};
+
 const MESES = [
   'JANEIRO', 'FEVEREIRO', 'MARÇO', 'ABRIL',
   'MAIO', 'JUNHO', 'JULHO', 'AGOSTO',
@@ -1169,7 +1175,7 @@ export default function TelaGestaoDatas() {
         ]}
       >
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={voltarParaGestaoDeContas}
           style={styles.backButton}
         >
           <Ionicons name="arrow-back" size={23} color="#F7F5EC" />
