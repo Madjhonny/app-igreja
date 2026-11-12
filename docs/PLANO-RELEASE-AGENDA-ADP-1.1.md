@@ -52,7 +52,7 @@ A API já suporta `RESEND_API_KEY` e `EMAIL_FROM`.
 - [ ] Testar senha: alterar, recuperar via e-mail autorizado, login com senha nova, senha antiga e código reaproveitado rejeitados.
 - [x] Revisar serviço Render, branch, auto-deploy, start/build commands e deploy atualmente ativo (somente leitura). Variáveis de ambiente continuam pendentes de conferência manual segura, sem divulgar valores.
 - [ ] Confirmar qual API está embutida na build Web/Android (`EXPO_PUBLIC_API_URL`); builds de demonstração devem apontar ao backend planejado.
-- [ ] Fazer backup/snapshot verificável da `production` no Neon e registrar plano de recuperação.
+- [x] Criado e verificado snapshot manual da `production` no Neon: `agenda-adp-1-1-pre-migracao-003`, ID `snap-long-truth-b6gxqftq`, criado em `2026-11-12T02:24:52Z`. Antes da migração, conferir novamente o snapshot e o caminho de restauração; nenhuma restauração foi testada.
 - [ ] Antes do deploy da API: aplicar migration `003` **na branch de produção**, somente após autorização e conferir aplicação.
 - [ ] Verificar segredos (sem expor valores): `JWT_SECRET`, `DB_*`, `DB_SSL`, `CORS_ORIGINS`; durante demo interna considerar Resend teste limitado.
 - [ ] Conferir início do servidor, login e GET /mural em produção após deploy da API; aplicar smoke test com contas estritamente de teste.
@@ -71,6 +71,15 @@ A API já suporta `RESEND_API_KEY` e `EMAIL_FROM`.
 - **Controle obrigatório:** NÃO fazer merge do PR #11 antes da migração `003` na branch `production` do Neon, com backup e autorização explícita. Avaliar desativar o auto-deploy enquanto o plano é executado, ou programar a migração antes de efetuar o merge.
 - Credenciais e variáveis do serviço **não foram lidas nem alteradas** nesta verificação; em especial conferir `DB_*`, `JWT_SECRET`, `CORS_ORIGINS`, e remetente de e-mail de demonstração em canal privado.
 - Nenhum deploy, reinício, mudança de serviço ou banco foi realizado.
+
+## Snapshot de segurança pré-migração — confirmado
+
+- Projeto Neon: `empty-brook-40220663` (`agenda-igreja`).
+- Branch de origem: `production` (ID `br-still-grass-b6wfls3v`).
+- Snapshot: `agenda-adp-1-1-pre-migracao-003` (ID `snap-long-truth-b6gxqftq`).
+- Criação (UTC): `2026-11-12T02:24:52Z` — manual, verificado por listagem de snapshots.
+- Esta captura não executou migração, deploy, mudança de credenciais nem substituiu dados da produção.
+- **Antes de migrar:** conferir novamente existência e prazo de retenção do snapshot; preparar procedimento de restauração, sem restaurar sobre `production` automaticamente. Preferir testar restauração numa branch isolada caso autorizado.
 
 ## Sequência proposta para implantação futura (não executada)
 
