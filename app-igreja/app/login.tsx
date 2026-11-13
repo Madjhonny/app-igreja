@@ -20,6 +20,7 @@ import {
   clearSession,
   enterGuestMode,
   getSessionToken,
+  isGuestMode,
   refreshSession,
   saveSession,
   shouldKeepSignedIn,
@@ -69,12 +70,20 @@ export default function TelaLogin() {
     setVerificandoSessao(true);
 
     try {
-      const [token, manter] = await Promise.all([
+      const [token, manter, convidado] = await Promise.all([
         getSessionToken(),
         shouldKeepSignedIn(),
+        isGuestMode(),
       ]);
 
       setManterConectado(manter);
+
+      // Restaura o acesso de visitante apos reiniciar o Expo.
+      // Convidado nao possui token de autenticacao.
+      if (convidado && !token) {
+        router.replace('/(tabs)/agenda');
+        return;
+      }
 
       if (token && manter) {
         const usuarioAtual = await refreshSession();
