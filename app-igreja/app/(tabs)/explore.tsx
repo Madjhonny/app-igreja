@@ -1,5 +1,5 @@
 import { useAppDialog } from '@/components/app-dialog';
-import { apiUrl, authenticatedFetch, canInteract, canManage, refreshSession } from '@/services/session';
+import { apiUrl, apiFetch, authenticatedFetch, canInteract, canManage, isGuestMode, refreshSession } from '@/services/session';
 import { useSessionUser } from '@/hooks/use-session-user';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, TextInput, Modal, ActivityIndicator, Dimensions, FlatList, RefreshControl, StatusBar, BackHandler, PixelRatio, Platform } from 'react-native';
@@ -55,6 +55,7 @@ export default function TelaEventos() {
   const [erroCarregamento, setErroCarregamento] = useState('');
   
   const [usuarioLogado, setUsuarioLogado] = useSessionUser();
+  const [convidado, setConvidado] = useState(false);
 
   // Controle do modo Fullscreen e navegação por slides
   const [modoFullscreen, setModoFullscreen] = useState(false);
@@ -114,7 +115,10 @@ export default function TelaEventos() {
     if (!isRefresh) setCarregando(true);
     setErroCarregamento('');
     try {
-      const resposta = await authenticatedFetch('/mural?midia=link');
+      const modoConvidado = await isGuestMode();
+      const resposta = modoConvidado
+        ? await apiFetch('/publico/mural')
+        : await authenticatedFetch('/mural?midia=link');
       if (resposta.ok) {
         const dados = await resposta.json();
         setPosts(dados);
@@ -140,8 +144,19 @@ export default function TelaEventos() {
     let ativo = true;
     void (async () => {
       try {
-        const usuario = await refreshSession();
-        if (ativo && usuario) setUsuarioLogado(usuario);
+        const modoConvidado = await isGuestMode();
+        if (!ativo) return;
+
+        setConvidado(modoConvidado);
+
+        if (modoConvidado) {
+          setUsuarioLogado(null);
+        } else {
+          const usuario = await refreshSession();
+          if (!ativo) return;
+          setUsuarioLogado(usuario);
+        }
+
         if (ativo) await buscarPosts(false);
       } catch {
         if (ativo) setErroCarregamento('Falha de conexão. Verifique sua internet e tente novamente.');
@@ -155,7 +170,7 @@ export default function TelaEventos() {
     void buscarPosts(true);
   }, [buscarPosts]);
 
-  const podeInteragir = canInteract(usuarioLogado);
+  const podeInteragir = !convidado && canInteract(usuarioLogado);
 
   const curtirPost = async (postId: number) => {
     if (!podeInteragir) return;
@@ -204,6 +219,14 @@ export default function TelaEventos() {
   };
 
   const abrirComentarios = async (postId: number) => {
+    if (convidado) {
+      mostrarDialogo(
+        'Acesso restrito',
+        'Entre na sua conta para visualizar e participar dos comentários.'
+      );
+      return;
+    }
+
     setPostSelecionadoId(postId);
     setComentarioParaExcluir(null);
     setErroComentario('');
@@ -374,7 +397,7 @@ export default function TelaEventos() {
         <View style={styles.postHeader}>
           <TouchableOpacity 
             style={styles.authorContainer} 
-            onPress={(e) => { e.stopPropagation(); router.push({ pathname: '/perfil-publico', params: { id: post.usuario_id } } as any); }}
+            onPress={(e) => { e.stopPropagation(); if (!convidado) router.push({ pathname: '/perfil-publico', params: { id: post.usuario_id } } as any); }}
           >
             {autorFoto ? (
               <Image source={{ uri: autorFoto }} style={styles.authorAvatar} />
@@ -478,7 +501,7 @@ export default function TelaEventos() {
         <View style={styles.fullscreenFooterClean}>
           <TouchableOpacity 
             style={styles.authorRowFooter} 
-            onPress={() => { setModoFullscreen(false); router.push({ pathname: '/perfil-publico', params: { id: post.usuario_id } } as any); }}
+            onPress={() => { setModoFullscreen(false); if (!convidado) router.push({ pathname: '/perfil-publico', params: { id: post.usuario_id } } as any); }}
           >
             {autorFoto ? (
               <Image source={{ uri: autorFoto }} style={styles.authorAvatarFooter} />
