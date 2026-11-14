@@ -25,3 +25,4 @@ desktop.ini
 # Arquivos temporários
 *.tmp
 *.bak
+/app-igreja/revisao-api-agenda-adp.txt

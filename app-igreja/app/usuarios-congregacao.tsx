@@ -2,7 +2,7 @@ import { useAppDialog } from '@/components/app-dialog';
 import { useSessionUser } from '@/hooks/use-session-user';
 import { apiFetch, authenticatedFetch, canManage, getSessionToken, getStoredUser } from '@/services/session';
 import React, { useState, useCallback } from 'react';
-import { StyleSheet, Text, View, FlatList, TouchableOpacity, ActivityIndicator, Modal, Image, ScrollView } from 'react-native';
+import { StyleSheet, Text, View, FlatList, TouchableOpacity, ActivityIndicator, Modal, Image, ScrollView, Platform } from 'react-native';
 import { router, useLocalSearchParams, useFocusEffect, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
@@ -290,7 +290,7 @@ const styles = StyleSheet.create({
   header: { backgroundColor: '#2A4B4C', paddingTop: 50, paddingBottom: 20, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20 },
   backButton: { marginRight: 15 },
   headerTitle: { color: '#F7F5EC', fontSize: 20, fontWeight: 'bold', flex: 1 },
-  listContainer: { padding: 15 },
+  listContainer: { padding: 16, width: '100%', maxWidth: 760, alignSelf: 'center' },
   emptyContainer: { alignItems: 'center', marginTop: 50 },
   emptyText: { color: '#666', fontSize: 15, marginTop: 10 },
   card: { backgroundColor: '#fff', padding: 15, borderRadius: 10, marginBottom: 15, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5, elevation: 3 },
@@ -304,8 +304,8 @@ const styles = StyleSheet.create({
   badgeAprovado: { backgroundColor: '#4CAF50' },
   badgeText: { color: '#fff', fontSize: 10, fontWeight: 'bold' },
   infoText: { fontSize: 12, color: '#666', marginTop: 3 },
-  modalFullOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
-  modalDetalhesContent: { backgroundColor: '#F7F5EC', borderTopLeftRadius: 25, borderTopRightRadius: 25, padding: 20, minHeight: '60%' },
+  modalFullOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: Platform.OS === 'web' ? 'center' : 'flex-end', alignItems: Platform.OS === 'web' ? 'center' : 'stretch' },
+  modalDetalhesContent: { backgroundColor: '#F7F5EC', borderTopLeftRadius: 25, borderTopRightRadius: 25, borderBottomLeftRadius: Platform.OS === 'web' ? 25 : 0, borderBottomRightRadius: Platform.OS === 'web' ? 25 : 0, padding: 20, minHeight: Platform.OS === 'web' ? undefined : '60%', width: Platform.OS === 'web' ? '92%' : '100%', maxWidth: Platform.OS === 'web' ? 720 : undefined },
   closeModalButton: { alignSelf: 'flex-end', padding: 5 },
   detalhesHeader: { alignItems: 'center', marginBottom: 20 },
   avatarGrande: { width: 100, height: 100, borderRadius: 50, borderWidth: 3, borderColor: '#2A4B4C' },
@@ -316,11 +316,11 @@ const styles = StyleSheet.create({
   detalhesCongregacaoLink: { fontSize: 14, color: '#2A4B4C', fontWeight: 'bold' },
   detalhesBox: { backgroundColor: '#fff', padding: 15, borderRadius: 15, marginBottom: 20, elevation: 2 },
   detalhesInfo: { fontSize: 15, color: '#444', marginBottom: 10, fontWeight: '500' },
-  actionsRow: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 10 },
-  actionButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E2EAE9', paddingHorizontal: 15, paddingVertical: 12, borderRadius: 8, flex: 0.48, justifyContent: 'center', borderWidth: 1, borderColor: '#2A4B4C' },
+  actionsRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', marginTop: 10, width: '100%', gap: 12 },
+  actionButton: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#E2EAE9', paddingHorizontal: 15, paddingVertical: 12, minHeight: 46, borderRadius: 8, flex: 1, maxWidth: Platform.OS === 'web' ? 240 : undefined, justifyContent: 'center', borderWidth: 1, borderColor: '#2A4B4C' },
   actionText: { color: '#2A4B4C', fontWeight: 'bold', marginLeft: 5, fontSize: 14 },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
-  modalContent: { backgroundColor: '#fff', width: '80%', borderRadius: 15, padding: 20 },
+  modalContent: { backgroundColor: '#fff', width: '80%', maxWidth: Platform.OS === 'web' ? 440 : undefined, borderRadius: 15, padding: 20 },
   modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#2A4B4C', marginBottom: 15, textAlign: 'center' },
   modalOption: { paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#EEE', paddingHorizontal: 10, borderRadius: 6 },
   modalOptionText: { fontSize: 15, color: '#333', textAlign: 'center' }
