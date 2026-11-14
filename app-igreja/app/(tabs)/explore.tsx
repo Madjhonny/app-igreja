@@ -112,7 +112,7 @@ export default function TelaEventos() {
   }, [modoFullscreen, navigation]);
 
   const buscarPosts = useCallback(async (isRefresh = false) => {
-    if (!isRefresh) setCarregando(true);
+    // Mantem os eventos visiveis ao retornar para a aba.
     setErroCarregamento('');
     try {
       const modoConvidado = await isGuestMode();
@@ -703,11 +703,11 @@ export default function TelaEventos() {
 
       {carregando ? (
         <ActivityIndicator size="large" color="#2A4B4C" style={{ marginTop: 50 }} />
-      ) : erroCarregamento ? (
+      ) : erroCarregamento && posts.length === 0 ? (
         <View style={styles.emptyBox}>
           <Ionicons name="cloud-offline-outline" size={50} color="#C4C2B7" />
           <Text accessibilityRole="alert" style={styles.emptyText}>{erroCarregamento}</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={() => void buscarPosts(false)} accessibilityRole="button">
+          <TouchableOpacity style={styles.retryButton} onPress={() => { setCarregando(true); void buscarPosts(false); }} accessibilityRole="button">
             <Text style={styles.retryText}>Tentar novamente</Text>
           </TouchableOpacity>
         </View>
