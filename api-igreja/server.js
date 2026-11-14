@@ -541,7 +541,82 @@ app.get('/congregacoes', async (req, res) => {
 // ========================================================
 // === ROTAS DE EVENTOS (AGENDA) ===
 // ========================================================
+app.get('/publico/eventos', async (req, res) => {
+  try {
+    const { mes, ano } = req.query;
 
+    if ((mes == null) !== (ano == null)) {
+      return res.status(400).json({
+        erro: 'Informe mês e ano juntos.'
+      });
+    }
+
+    if (
+      mes != null &&
+      (
+        !Number.isInteger(Number(mes)) ||
+        Number(mes) < 1 ||
+        Number(mes) > 12 ||
+        !Number.isInteger(Number(ano)) ||
+        Number(ano) < 2000 ||
+        Number(ano) > 2200
+      )
+    ) {
+      return res.status(400).json({
+        erro: 'Mês ou ano inválido.'
+      });
+    }
+
+    let query = `
+      SELECT
+        e.id,
+        e.titulo,
+        e.data_inicio,
+        e.data_fim,
+        e.horario,
+        e.duracao_minutos,
+        e.congregacao_id,
+        e.legenda,
+        c.nome AS congregacao
+      FROM eventos e
+      JOIN congregacoes c
+        ON c.id = e.congregacao_id
+      JOIN usuarios u
+        ON u.id = e.criado_por_usuario_id
+    `;
+
+    const valores = [];
+
+    if (mes != null) {
+      query += `
+        WHERE e.data_inicio <=
+          (
+            DATE_TRUNC('month', make_date($2, $1, 1))
+            + INTERVAL '1 month - 1 day'
+          )::date
+        AND e.data_fim >= make_date($2, $1, 1)
+      `;
+
+      valores.push(Number(mes), Number(ano));
+    }
+
+    query += `
+      ORDER BY e.data_inicio ASC, e.horario ASC
+    `;
+
+    const resultado = await pool.query(query, valores);
+
+    res.set('Cache-Control', 'no-store');
+    return res.json(resultado.rows);
+
+  } catch (erro) {
+    console.error('Erro ao consultar agenda pública:', erro);
+
+    return res.status(500).json({
+      erro: 'Não foi possível consultar a agenda.'
+    });
+  }
+});
 app.get('/eventos', verificarToken, async (req, res) => {
   try {
     const { mes, ano } = req.query;
@@ -968,6 +1043,67 @@ app.post('/mural', verificarToken, somenteGestores, async (req, res) => {
   } catch (erro) {
     console.error("Erro ao criar post no mural:", erro);
     res.status(500).json({ erro: "Erro interno ao criar publicação." });
+  }
+});
+
+app.get('/publico/mural', async (req, res) => {
+  try {
+    const query = `
+      SELECT
+        m.id,
+        m.titulo,
+        m.descricao,
+        m.local,
+        m.tipo_midia,
+        m.data_inicio,
+        m.data_fim,
+        CASE
+          WHEN LEFT(m.midia, 5) = 'data:'
+          THEN NULL
+          ELSE m.midia
+        END AS midia,
+        (LEFT(m.midia, 5) = 'data:') AS midia_embutida,
+        (
+          SELECT COUNT(*)
+          FROM mural_curtidas mc
+          WHERE mc.post_id = m.id
+        ) AS total_curtidas
+      FROM mural_eventos m
+      WHERE m.data_fim >= CURRENT_DATE
+      ORDER BY
+        m.data_inicio ASC,
+        m.criado_em DESC,
+        m.id DESC;
+    `;
+
+    const resultado = await pool.query(query);
+
+    const posts = resultado.rows.map(post => ({
+      id: post.id,
+      autor: 'Equipe Agenda ADP',
+      titulo: post.titulo,
+      descricao: post.descricao,
+      local: post.local,
+      tipo: post.tipo_midia,
+      midia: post.midia_embutida
+        ? criarLinkImagem(post.id)
+        : post.midia,
+      totalCurtidas: Number(post.total_curtidas) || 0,
+      curtiuPorMim: false,
+      dataInicio: post.data_inicio,
+      dataFim: post.data_fim,
+      comentarios: []
+    }));
+
+    res.set('Cache-Control', 'no-store');
+    return res.json(posts);
+
+  } catch (erro) {
+    console.error('Erro ao consultar mural público:', erro);
+
+    return res.status(500).json({
+      erro: 'Não foi possível consultar o mural.'
+    });
   }
 });
 

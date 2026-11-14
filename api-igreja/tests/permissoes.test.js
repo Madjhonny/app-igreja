@@ -348,3 +348,41 @@ test('IDs inteiros legítimos continuam aceitos no corpo e nas rotas', async () 
     assert.equal(t.queries.length, 2);
   }
 });
+test('convidado sem login pode consultar agenda e mural publicos', async () => {
+  const s = setup(null);
+
+  for (const rota of ['/publico/eventos', '/publico/mural']) {
+    const resposta = await s.call('get', rota, {}, '');
+
+    assert.equal(resposta.code, 200, rota);
+    assert.ok(Array.isArray(resposta.data), rota);
+  }
+});
+test('convidado sem login nao pode modificar informacoes protegidas', async () => {
+  const s = setup(null);
+
+  const rotasProtegidas = [
+    ['post', '/eventos'],
+    ['put', '/eventos/:id'],
+    ['delete', '/eventos/:id'],
+    ['post', '/mural'],
+    ['delete', '/mural/:id'],
+    ['post', '/mural/:id/curtir'],
+    ['post', '/mural/:id/comentarios'],
+    ['put', '/usuarios/perfil'],
+    ['get', '/usuarios'],
+    ['post', '/gestao-datas/publicar']
+  ];
+
+  for (const [metodo, rota] of rotasProtegidas) {
+    const consultasAntes = s.queries.length;
+    const resposta = await s.call(metodo, rota, {}, '');
+
+    assert.equal(resposta.code, 401, `${metodo} ${rota}`);
+    assert.equal(
+      s.queries.length,
+      consultasAntes,
+      `Acesso sem login nao deve consultar o banco: ${rota}`
+    );
+  }
+});

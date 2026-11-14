@@ -127,7 +127,7 @@ const styles = StyleSheet.create({
   header: { backgroundColor: '#2A4B4C', paddingTop: 50, paddingBottom: 20, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20 },
   backButton: { marginRight: 15 },
   headerTitle: { color: '#F7F5EC', fontSize: 20, fontWeight: 'bold' },
-  listContainer: { padding: 15 },
+  listContainer: { padding: 16, width: '100%', maxWidth: 760, alignSelf: 'center' },
   hubSubtitle: { fontSize: 14, color: '#666', marginBottom: 15, marginTop: 5, fontWeight: '500' },
   folderCard: { backgroundColor: '#fff', padding: 18, borderRadius: 12, marginBottom: 15, flexDirection: 'row', alignItems: 'center', shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5, elevation: 3 },
   folderIconContainer: { width: 50, height: 50, borderRadius: 25, backgroundColor: '#E2EAE9', justifyContent: 'center', alignItems: 'center', marginRight: 15 },

@@ -19,6 +19,7 @@ const listeners = new Set<(event: SessionEvent) => void>();
 const TOKEN_KEY = 'userToken';
 const USER_KEY = 'userData';
 const KEEP_KEY = 'manterConectado';
+const GUEST_KEY = 'guestMode';
 
 export function subscribeSession(listener: (event: SessionEvent) => void) {
   listeners.add(listener);
@@ -53,6 +54,15 @@ export async function storeSessionUser(user: SessionUser) {
   emit({ user });
 }
 
+export async function isGuestMode() {
+  return (await AsyncStorage.getItem(GUEST_KEY)) === 'true';
+}
+
+export async function enterGuestMode() {
+  await clearSession();
+  await AsyncStorage.setItem(GUEST_KEY, 'true');
+}
+
 export async function saveSession(token: string, user: SessionUser, keepSignedIn: boolean) {
   if (Platform.OS === 'web') await AsyncStorage.setItem(TOKEN_KEY, token);
   else {
@@ -60,6 +70,7 @@ export async function saveSession(token: string, user: SessionUser, keepSignedIn
     await AsyncStorage.removeItem(TOKEN_KEY);
   }
   await AsyncStorage.setItem(KEEP_KEY, keepSignedIn ? 'true' : 'false');
+  await AsyncStorage.removeItem(GUEST_KEY);
   await storeSessionUser(user);
 }
 
@@ -75,7 +86,7 @@ export function apiUrl(pathOrUrl: string) {
 export async function clearSession(expectedToken?: string, reason?: string) {
   if (expectedToken && await getSessionToken() !== expectedToken) return;
   if (Platform.OS !== 'web') await SecureStore.deleteItemAsync(TOKEN_KEY);
-  await AsyncStorage.multiRemove([TOKEN_KEY, USER_KEY, KEEP_KEY]);
+  await AsyncStorage.multiRemove([TOKEN_KEY, USER_KEY, KEEP_KEY, GUEST_KEY]);
   emit({ user: null, reason });
 }
 

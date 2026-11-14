@@ -1,7 +1,7 @@
 import { useAppDialog } from '@/components/app-dialog';
 import { apiFetch, authenticatedFetch } from '@/services/session';
 import React, { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, FlatList } from 'react-native';
+import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, FlatList, Platform } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
@@ -23,11 +23,38 @@ function formatarDataBanco(data: Date) {
   return `${data.getFullYear()}-${String(data.getMonth() + 1).padStart(2, '0')}-${String(data.getDate()).padStart(2, '0')}`;
 }
 
+function lerDataHoraWeb(dataTexto: string, horaTexto: string): Date | null {
+  const data = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(dataTexto.trim());
+  const hora = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(horaTexto.trim());
+
+  if (!data || !hora) return null;
+
+  const dia = Number(data[1]);
+  const mes = Number(data[2]);
+  const ano = Number(data[3]);
+
+  if (ano < 2000 || ano > 2200) return null;
+
+  const resultado = new Date(
+    ano, mes - 1, dia, Number(hora[1]), Number(hora[2])
+  );
+
+  if (
+    resultado.getFullYear() !== ano ||
+    resultado.getMonth() !== mes - 1 ||
+    resultado.getDate() !== dia
+  ) {
+    return null;
+  }
+
+  return resultado;
+}
+
 export default function TelaEditarEvento() {
   const { alert: mostrarDialogo } = useAppDialog();
   // Recebe os dados que vieram da tela de Agenda
-  const params = useLocalSearchParams(); 
-  
+  const params = useLocalSearchParams();
+
   const dataInicioOriginal = primeiroParametro(params.data_inicio);
   const dataFimOriginal = primeiroParametro(params.data_fim) || dataInicioOriginal;
   const horarioOriginal = primeiroParametro(params.horario);
@@ -40,12 +67,21 @@ export default function TelaEditarEvento() {
   }, [dataFimOriginal, dataInicioOriginal]);
 
   const [titulo, setTitulo] = useState(primeiroParametro(params.titulo) || '');
-  
+
   // === ESTADOS DE DATA E HORA ===
   const [dataEvento, setDataEvento] = useState(() => criarDataInicial(dataInicioOriginal, horarioOriginal));
   const [mostrarCalendario, setMostrarCalendario] = useState(false);
   const [mostrarRelogio, setMostrarRelogio] = useState(false);
-  
+  const [dataWeb, setDataWeb] = useState(() =>
+    dataEvento.toLocaleDateString('pt-BR')
+  );
+  const [horaWeb, setHoraWeb] = useState(() =>
+    dataEvento.toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit'
+    })
+  );
+
   // === ESTADOS DA CONGREGAÇÃO ===
   const [congregacao, setCongregacao] = useState(primeiroParametro(params.congregacao) || 'Selecione o local');
   const [congregacaoId, setCongregacaoId] = useState(primeiroParametro(params.congregacao_id) || '');
@@ -70,7 +106,7 @@ export default function TelaEditarEvento() {
 
   // === FUNÇÕES DO CALENDÁRIO E RELÓGIO ===
   const aoMudarData = (event: any, dataSelecionada?: Date) => {
-    setMostrarCalendario(false); 
+    setMostrarCalendario(false);
     if (dataSelecionada) {
       const novaData = new Date(dataEvento);
       novaData.setFullYear(dataSelecionada.getFullYear());
@@ -81,7 +117,7 @@ export default function TelaEditarEvento() {
   };
 
   const aoMudarHora = (event: any, horaSelecionada?: Date) => {
-    setMostrarRelogio(false); 
+    setMostrarRelogio(false);
     if (horaSelecionada) {
       const novaData = new Date(dataEvento);
       novaData.setHours(horaSelecionada.getHours());
@@ -100,12 +136,24 @@ export default function TelaEditarEvento() {
       return;
     }
 
-    const dataFormatadaDB = formatarDataBanco(dataEvento);
-    const dataFim = new Date(dataEvento);
+    const dataParaSalvar = Platform.OS === 'web'
+      ? lerDataHoraWeb(dataWeb, horaWeb)
+      : dataEvento;
+
+    if (!dataParaSalvar) {
+      mostrarDialogo(
+        'Data ou horario invalido',
+        'Informe a data como DD/MM/AAAA e o horario como HH:MM.'
+      );
+      return;
+    }
+
+    const dataFormatadaDB = formatarDataBanco(dataParaSalvar);
+    const dataFim = new Date(dataParaSalvar);
     dataFim.setDate(dataFim.getDate() + duracaoDias);
 
-    const horas = String(dataEvento.getHours()).padStart(2, '0');
-    const minutos = String(dataEvento.getMinutes()).padStart(2, '0');
+    const horas = String(dataParaSalvar.getHours()).padStart(2, '0');
+    const minutos = String(dataParaSalvar.getMinutes()).padStart(2, '0');
     const horarioDB = `${horas}:${minutos}`;
 
     setCarregando(true);
@@ -128,7 +176,7 @@ export default function TelaEditarEvento() {
       if (resposta.ok) {
         mostrarDialogo("Sucesso!", "Evento atualizado com sucesso.", [
           { text: "Voltar à agenda", onPress: () => router.back() },
-        ]); 
+        ]);
       } else if (resposta.status === 409 && dados.codigo === 'CONFLITO_AGENDA' && dados.podeConfirmar) {
         const encontrados = (dados.eventosConflitantes || []).slice(0, 3)
           .map((ev: any) => '• ' + ev.titulo).join('\n');
@@ -166,7 +214,7 @@ export default function TelaEditarEvento() {
       if (resposta.ok) {
         mostrarDialogo("Excluído", "O evento foi apagado.", [
           { text: "Voltar à agenda", onPress: () => router.back() },
-        ]); 
+        ]);
       } else {
         mostrarDialogo("Erro", "Não foi possível excluir o evento.");
       }
@@ -186,60 +234,112 @@ export default function TelaEditarEvento() {
         <Text style={styles.headerTitle}>Editar Evento</Text>
       </View>
 
-      <ScrollView style={styles.formContainer}>
-        <Text style={styles.label}>Título do Evento</Text>
-        <TextInput 
-          style={styles.input} 
-          value={titulo}
-          onChangeText={setTitulo}
-        />
+      <ScrollView style={styles.formContainer} contentContainerStyle={styles.formScrollContent}>
+        {/* Mantem todos os campos e botoes na mesma coluna responsiva. */}
+        <View style={[styles.formContent, Platform.OS === 'web' && styles.webFormContent]}>
+          <Text style={styles.label}>Título do Evento</Text>
+          <TextInput
+            style={styles.input}
+            value={titulo}
+            onChangeText={setTitulo}
+          />
 
-        <Text style={styles.label}>Data</Text>
-        <TouchableOpacity style={styles.selectInput} onPress={() => setMostrarCalendario(true)}>
-          <Text style={styles.selectTextFilled}>📅 {textoDataVisivel}</Text>
-        </TouchableOpacity>
-        
-        {mostrarCalendario && (
-          <DateTimePicker value={dataEvento} mode="date" display="default" onChange={aoMudarData} />
-        )}
+          <Text style={styles.label}>Data</Text>
+          <TouchableOpacity style={styles.selectInput} onPress={() => setMostrarCalendario(true)}>
+            <Text style={styles.selectTextFilled}>📅 {textoDataVisivel}</Text>
+          </TouchableOpacity>
 
-        <Text style={styles.label}>Horário</Text>
-        <TouchableOpacity style={styles.selectInput} onPress={() => setMostrarRelogio(true)}>
-          <Text style={styles.selectTextFilled}>⏰ {textoHoraVisivel}</Text>
-        </TouchableOpacity>
-        
-        {mostrarRelogio && (
-          <DateTimePicker value={dataEvento} mode="time" display="default" onChange={aoMudarHora} />
-        )}
+          {mostrarCalendario && (
+            Platform.OS === 'web' ? (
+              <TextInput
+                style={styles.input}
+                value={dataWeb}
+                placeholder="DD/MM/AAAA"
+                autoFocus
+                onChangeText={(valor) => {
+                  setDataWeb(valor);
+                  const data = lerDataHoraWeb(valor, horaWeb);
+                  if (data) setDataEvento(data);
+                }}
+                onBlur={() => setMostrarCalendario(false)}
+              />
+            ) : (
+              <DateTimePicker
+                value={dataEvento}
+                mode="date"
+                display="default"
+                onChange={aoMudarData}
+              />
+            )
+          )}
 
-        <Text style={styles.label}>Congregação / Local</Text>
-        <TouchableOpacity style={styles.selectInput} onPress={() => setModalVisivel(true)}>
-          <Text style={styles.selectTextFilled}>{congregacao}</Text>
-          <Text style={styles.selectArrow}>▼</Text>
-        </TouchableOpacity>
+          <Text style={styles.label}>Horário</Text>
+          <TouchableOpacity style={styles.selectInput} onPress={() => setMostrarRelogio(true)}>
+            <Text style={styles.selectTextFilled}>⏰ {textoHoraVisivel}</Text>
+          </TouchableOpacity>
 
-        <TouchableOpacity 
-          style={[styles.saveButton, carregando && styles.buttonDisabled]} 
-          onPress={() => void salvarEdicao()}
-          disabled={carregando}
-        >
-          {carregando ? <ActivityIndicator color="#F7F5EC" /> : <Text style={styles.saveButtonText}>ATUALIZAR EVENTO</Text>}
-        </TouchableOpacity>
+          {mostrarRelogio && (
+            Platform.OS === 'web' ? (
+              <TextInput
+                style={styles.input}
+                value={horaWeb}
+                placeholder="HH:MM"
+                autoFocus
+                onChangeText={(valor) => {
+                  setHoraWeb(valor);
+                  const data = lerDataHoraWeb(dataWeb, valor);
+                  if (data) setDataEvento(data);
+                }}
+                onBlur={() => setMostrarRelogio(false)}
+              />
+            ) : (
+              <DateTimePicker
+                value={dataEvento}
+                mode="time"
+                display="default"
+                onChange={aoMudarHora}
+              />
+            )
+          )}
 
-        <TouchableOpacity 
-          style={[styles.deleteButton, carregando && styles.buttonDisabled]} 
-          onPress={confirmarExclusao}
-          disabled={carregando}
-        >
-          <Text style={styles.deleteButtonText}>EXCLUIR EVENTO</Text>
-        </TouchableOpacity>
+          <Text style={styles.label}>Congregação / Local</Text>
+          <TouchableOpacity style={styles.selectInput} onPress={() => setModalVisivel(true)}>
+            <Text style={styles.selectTextFilled}>{congregacao}</Text>
+            <Text style={styles.selectArrow}>▼</Text>
+          </TouchableOpacity>
+
+          {/* Botoes proporcionais: centralizados na Web, largura total no celular. */}
+          <View style={[styles.actionsContainer, Platform.OS === 'web' && styles.webActionsContainer]}>
+            <TouchableOpacity
+              style={[styles.saveButton, carregando && styles.buttonDisabled]}
+              onPress={() => void salvarEdicao()}
+              disabled={carregando}
+              accessibilityRole="button"
+            >
+              {carregando ? (
+                <ActivityIndicator color="#F7F5EC" />
+              ) : (
+                <Text style={styles.saveButtonText}>ATUALIZAR EVENTO</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.deleteButton, carregando && styles.buttonDisabled]}
+              onPress={confirmarExclusao}
+              disabled={carregando}
+              accessibilityRole="button"
+            >
+              <Text style={styles.deleteButtonText}>EXCLUIR EVENTO</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       </ScrollView>
 
       <Modal transparent={true} visible={modalVisivel} animationType="fade">
         <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setModalVisivel(false)}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Escolha a Congregação</Text>
-            <FlatList 
+            <FlatList
               data={listaCongregacoes}
               keyExtractor={(item) => String(item.id)}
               renderItem={({item}) => (
@@ -261,23 +361,55 @@ const styles = StyleSheet.create({
   backButton: { marginRight: 20 },
   backButtonText: { color: '#F7F5EC', fontSize: 16, fontWeight: 'bold' },
   headerTitle: { color: '#F7F5EC', fontSize: 20, fontWeight: 'bold' },
-  
-  formContainer: { padding: 20 },
-  label: { fontSize: 16, fontWeight: 'bold', color: '#2A4B4C', marginBottom: 8, marginTop: 15 },
+
+  formContainer: { flex: 1 },
+  formScrollContent: { paddingHorizontal: 20, paddingTop: 20, paddingBottom: 28 },
+  formContent: { width: '100%' },
+  webFormContent: { maxWidth: 560, alignSelf: 'center' },
+  label: { fontSize: 16, fontWeight: 'bold', color: '#2A4B4C', marginBottom: 8, marginTop: 16 },
   input: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#C4C2B7', padding: 15, borderRadius: 8, fontSize: 16, color: '#333' },
-  
+
   selectInput: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#C4C2B7', padding: 15, borderRadius: 8, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   selectTextFilled: { color: '#333', fontSize: 16, fontWeight: '500' },
   selectArrow: { color: '#2A4B4C', fontSize: 16 },
 
-  saveButton: { backgroundColor: '#2A4B4C', padding: 15, borderRadius: 8, alignItems: 'center', marginTop: 30, elevation: 2 },
-  deleteButton: { backgroundColor: '#E63946', padding: 15, borderRadius: 8, alignItems: 'center', marginTop: 15, elevation: 2, marginBottom: 40 },
+  actionsContainer: {
+    width: '100%',
+    marginTop: 28,
+    marginBottom: 40,
+    gap: 12,
+  },
+  webActionsContainer: {
+    alignSelf: 'center',
+    maxWidth: 560,
+  },
+  saveButton: {
+    width: '100%',
+    backgroundColor: '#2A4B4C',
+    minHeight: 52,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 2,
+  },
+  deleteButton: {
+    width: '100%',
+    backgroundColor: '#E63946',
+    minHeight: 52,
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   buttonDisabled: { opacity: 0.7 },
   saveButtonText: { color: '#F7F5EC', fontSize: 16, fontWeight: 'bold' },
   deleteButtonText: { color: '#F7F5EC', fontSize: 16, fontWeight: 'bold' },
 
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'center', alignItems: 'center' },
-  modalContent: { backgroundColor: '#fff', width: '80%', maxHeight: '70%', borderRadius: 15, padding: 20 },
+  modalContent: { backgroundColor: '#fff', width: '80%', maxWidth: 560, maxHeight: '70%', borderRadius: 15, padding: 20 },
   modalTitle: { fontSize: 20, fontWeight: 'bold', color: '#2A4B4C', marginBottom: 15, textAlign: 'center' },
   modalOption: { paddingVertical: 15, borderBottomWidth: 1, borderBottomColor: '#EEE' },
   modalOptionText: { fontSize: 18, color: '#333', textAlign: 'center' }

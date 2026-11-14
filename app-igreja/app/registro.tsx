@@ -300,7 +300,7 @@ export default function TelaRegistro() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton} activeOpacity={0.7}>
+        <TouchableOpacity onPress={() => router.replace('/login')} style={styles.backButton} activeOpacity={0.7}>
           <Ionicons name="arrow-back" size={22} color={cores.bege} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Criar Conta</Text>
