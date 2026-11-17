@@ -22,7 +22,7 @@ const input = {
   horario: '19:30', congregacao_id: 10,
 };
 
-function setup({ user = master, drafts = [], existing = [], failInsert = false } = {}) {
+function setup({ user = master, drafts = [], existing = [], failInsert = false, draftConflicts = [], failDraftUpdate = false } = {}) {
   const routes = new Map();
   const queries = [];
   let committed = false;
@@ -44,6 +44,16 @@ function setup({ user = master, drafts = [], existing = [], failInsert = false }
       if (sql.includes('pg_advisory_xact_lock')) return { rows: [], rowCount: 1 };
       if (sql.includes('FROM gestao_datas_rascunho') && sql.includes('FOR UPDATE')) {
         return { rows: drafts, rowCount: drafts.length };
+      }
+      if (sql.includes('SELECT id, nome FROM congregacoes')) {
+        return { rows: [{ id: 10, nome: 'Matriz' }], rowCount: 1 };
+      }
+      if (sql.includes('FROM gestao_datas_rascunho') && sql.includes('EXTRACT(EPOCH')) {
+        return { rows: draftConflicts, rowCount: draftConflicts.length };
+      }
+      if (sql.includes('UPDATE gestao_datas_rascunho') && sql.includes('SET titulo')) {
+        if (failDraftUpdate) throw Error('Falha simulada');
+        return { rows: [{ ...draft(Number(params[7])), titulo: params[0], horario: params[3], duracao_minutos: params[4], marcador: params[6] }], rowCount: 1 };
       }
       if (sql.includes('FROM eventos') && sql.includes('ANY($1::integer[])')) {
         return { rows: existing, rowCount: existing.length };
@@ -182,6 +192,21 @@ test('publicação sem conflito não exige confirmação excepcional', async () 
   assert.equal(db.committed, true);
 });
 
+test('publicação nunca copia observações internas dos rascunhos para a agenda', async () => {
+  for (const marker of ['NORMAL', 'REVISAR', 'CONFLITO']) {
+    const observacao = 'Anotação privada do MASTER';
+    const db = setup({ drafts: [{ ...draft(10, '2026-11-15', '19:30', marker), legenda: observacao }] });
+    const res = await db.call('post', '/gestao-datas/publicar', { confirmar_conflitos: marker !== 'NORMAL' });
+    assert.equal(res.code, 200);
+    assert.equal(db.committed, true);
+    const insert = db.queries.find(x => x.sql.includes('INSERT INTO eventos'));
+    assert.ok(insert);
+    assert.equal(insert.params[7], null);
+    assert.ok(!insert.params.includes(observacao));
+    assert.ok(!JSON.stringify(res.data).includes(observacao));
+  }
+});
+
 test('não publica nada quando não existem rascunhos pendentes', async () => {
   const db = setup();
   const res = await db.call('post', '/gestao-datas/publicar');
@@ -239,4 +264,85 @@ test('edição direta rejeita sobreposição com outro evento', async () => {
   assert.equal(res.code, 409);
   assert.equal(db.committed, false);
   assert.equal(db.rolledBack, true);
+});
+
+const draftInput = { ...input, horario: '18:30', duracao_minutos: 90, marcador: 'NORMAL', legenda: 'Descrição' };
+
+test('edição do rascunho atualiza o mesmo ID e ignora a si próprio nos conflitos', async () => {
+  const db = setup({ drafts: [draft(2)] });
+  const res = await db.call('put', '/gestao-datas/:id', draftInput);
+  assert.equal(res.code, 200);
+  assert.equal(res.data.evento.id, 2);
+  assert.equal(res.data.evento.horario, '18:30');
+  assert.equal(res.data.evento.duracao_minutos, 90);
+  assert.equal(res.data.evento.congregacao, 'Matriz');
+  assert.equal(res.data.conflitoDetectado, false);
+  assert.equal(db.inserts, 0);
+  const select = db.queries.find(x => x.sql.includes('id <> $6'));
+  assert.equal(select.params[5], '2');
+  const update = db.queries.find(x => x.sql.includes('UPDATE gestao_datas_rascunho'));
+  assert.match(update.sql, /WHERE id = \$8 AND master_id = \$9 AND publicado = FALSE/);
+  assert.equal(update.params[7], '2');
+  assert.equal(update.params[8], master.id);
+  assert.equal(db.committed, true);
+  assert.equal(db.released, 1);
+});
+
+test('edição de rascunhos marca conflito com outro rascunho ou evento publicado', async () => {
+  for (const conflitos of [{ draftConflicts: [draft(3)] }, { existing: [published(4)] }]) {
+    const db = setup({ drafts: [draft(2)], ...conflitos });
+    const res = await db.call('put', '/gestao-datas/:id', draftInput);
+    assert.equal(res.code, 200);
+    assert.equal(res.data.conflitoDetectado, true);
+    assert.equal(res.data.evento.marcador, 'CONFLITO');
+  }
+});
+
+test('edição salva observação interna e preserva anotação anterior quando o campo é omitido', async () => {
+  const observacao = 'Confirmar disponibilidade da congregação';
+  const db = setup({ drafts: [draft(2)] });
+  const res = await db.call('put', '/gestao-datas/:id', { ...draftInput, marcador: 'REVISAR', legenda: observacao });
+  assert.equal(res.code, 200);
+  const update = db.queries.find(x => x.sql.includes('UPDATE gestao_datas_rascunho'));
+  assert.equal(update.params[9], true);
+  assert.equal(update.params[10], observacao);
+
+  const semObservacao = { ...draftInput };
+  delete semObservacao.legenda;
+  const dbNormal = setup({ drafts: [{ ...draft(2), legenda: observacao }] });
+  const normal = await dbNormal.call('put', '/gestao-datas/:id', semObservacao);
+  assert.equal(normal.code, 200);
+  const updateNormal = dbNormal.queries.find(x => x.sql.includes('UPDATE gestao_datas_rascunho'));
+  assert.equal(updateNormal.params[9], false);
+  assert.match(updateNormal.sql, /ELSE legenda END/);
+});
+
+test('rascunho inexistente, publicado ou de outro MASTER não é editado', async () => {
+  const db = setup();
+  const res = await db.call('put', '/gestao-datas/:id', draftInput);
+  assert.equal(res.code, 404);
+  const lock = db.queries.find(x => x.sql.includes('FOR UPDATE'));
+  assert.match(lock.sql, /master_id = \$2 AND publicado = FALSE/);
+  assert.equal(db.queries.some(x => x.sql.includes('UPDATE gestao_datas_rascunho')), false);
+  assert.equal(db.rolledBack, true);
+});
+
+test('edição de rascunho rejeita ADMIN e horários ou duração inválidos', async () => {
+  const forbidden = await setup({ user: admin }).call('put', '/gestao-datas/:id', draftInput);
+  assert.equal(forbidden.code, 403);
+  for (const invalid of [{ horario: '25:00' }, { duracao_minutos: 5 }, { congregacao_id: '2e1' }]) {
+    const db = setup({ drafts: [draft(2)] });
+    const res = await db.call('put', '/gestao-datas/:id', { ...draftInput, ...invalid });
+    assert.equal(res.code, 400);
+    assert.equal(db.queries.length, 0);
+  }
+});
+
+test('falha na edição do rascunho reverte a transação', async () => {
+  const db = setup({ drafts: [draft(2)], failDraftUpdate: true });
+  const res = await db.call('put', '/gestao-datas/:id', draftInput);
+  assert.equal(res.code, 500);
+  assert.equal(db.rolledBack, true);
+  assert.equal(db.committed, false);
+  assert.equal(db.released, 1);
 });

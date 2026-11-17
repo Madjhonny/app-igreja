@@ -1469,6 +1469,10 @@ app.post('/gestao-datas', verificarToken, somenteMaster, async (req, res) => {
 
     const marcadorPermitido = ['NORMAL', 'REVISAR', 'CONFLITO'];
 
+    if (legenda != null && !textoValido(legenda, 0, 2000)) {
+      return res.status(400).json({ erro: 'As observações internas devem ter no máximo 2000 caracteres.' });
+    }
+
     if (marcador && !marcadorPermitido.includes(marcador)) {
       return res.status(400).json({
         erro: "Marcador inválido."
@@ -1577,6 +1581,87 @@ app.post('/gestao-datas', verificarToken, somenteMaster, async (req, res) => {
 });
 
 
+app.put('/gestao-datas/:id', verificarToken, somenteMaster, async (req, res) => {
+  let client;
+  let transacaoAberta = false;
+  try {
+    const { id } = req.params;
+    const { titulo, data_inicio, data_fim, horario, duracao_minutos, congregacao_id, marcador, legenda } = req.body || {};
+    const master_id = req.usuario.id;
+    if (!idValido(id) || !idValido(congregacao_id)) {
+      return res.status(400).json({ erro: 'Evento ou congregação inválidos.' });
+    }
+    const erroValidacao = validarEvento({ titulo, data_inicio, data_fim, horario });
+    if (erroValidacao || !HORA_RE.test(horario)) {
+      return res.status(400).json({ erro: erroValidacao || 'Horário inválido. Utilize HH:mm.' });
+    }
+    const duracao = Number(duracao_minutos);
+    if (!Number.isInteger(duracao) || duracao < 15 || duracao > 1440) {
+      return res.status(400).json({ erro: 'A duração deve estar entre 15 e 1440 minutos.' });
+    }
+    if (!['NORMAL', 'REVISAR', 'CONFLITO'].includes(marcador)) {
+      return res.status(400).json({ erro: 'Marcador inválido.' });
+    }
+    if (legenda != null && !textoValido(legenda, 0, 2000)) {
+      return res.status(400).json({ erro: 'A descrição deve ter no máximo 2000 caracteres.' });
+    }
+
+    client = await pool.connect();
+    await client.query('BEGIN');
+    transacaoAberta = true;
+    // Mesma ordem de bloqueio da publicação: primeiro o rascunho, depois a congregação.
+    const atual = await client.query(
+      'SELECT id, congregacao_id FROM gestao_datas_rascunho WHERE id = $1 AND master_id = $2 AND publicado = FALSE FOR UPDATE',
+      [id, master_id]
+    );
+    if (!atual.rowCount) {
+      await client.query('ROLLBACK');
+      transacaoAberta = false;
+      return res.status(404).json({ erro: 'Rascunho não encontrado ou já publicado.' });
+    }
+    await bloquearAgendaDaCongregacao(client, [atual.rows[0].congregacao_id, congregacao_id]);
+    const congregacao = await client.query('SELECT id, nome FROM congregacoes WHERE id = $1', [congregacao_id]);
+    if (!congregacao.rowCount) {
+      await client.query('ROLLBACK');
+      transacaoAberta = false;
+      return res.status(404).json({ erro: 'Congregação não encontrada.' });
+    }
+    const conflitosRascunho = await client.query(`
+      SELECT id, titulo FROM gestao_datas_rascunho
+      WHERE congregacao_id = $1 AND publicado = FALSE AND id <> $6
+        AND data_inicio <= $3::date AND data_fim >= $2::date
+        AND EXTRACT(EPOCH FROM horario::time) < EXTRACT(EPOCH FROM $4::time) + $5 * 60
+        AND EXTRACT(EPOCH FROM horario::time) + COALESCE(duracao_minutos, 60) * 60 > EXTRACT(EPOCH FROM $4::time)
+      LIMIT 5;
+    `, [congregacao_id, data_inicio, data_fim, horario, duracao, id]);
+    const conflitosPublicados = await consultarConflitosPublicados(client, {
+      congregacao_id, data_inicio, data_fim, horario, duracao_minutos: duracao,
+    });
+    const conflitoDetectado = conflitosRascunho.rowCount > 0 || conflitosPublicados.length > 0;
+    const resultado = await client.query(`
+      UPDATE gestao_datas_rascunho
+      SET titulo = $1, data_inicio = $2, data_fim = $3, horario = $4,
+          duracao_minutos = $5, congregacao_id = $6, marcador = $7,
+          legenda = CASE WHEN $10::boolean THEN $11::text ELSE legenda END
+      WHERE id = $8 AND master_id = $9 AND publicado = FALSE
+      RETURNING *;
+    `, [titulo.trim(), data_inicio, data_fim, horario, duracao, congregacao_id,
+      conflitoDetectado ? 'CONFLITO' : marcador, id, master_id,
+      Object.prototype.hasOwnProperty.call(req.body, 'legenda'), legenda?.trim() || null]);
+    await client.query('COMMIT');
+    transacaoAberta = false;
+    return res.json({ conflitoDetectado, evento: { ...resultado.rows[0], congregacao: congregacao.rows[0].nome } });
+  } catch (erro) {
+    if (transacaoAberta && client) {
+      try { await client.query('ROLLBACK'); } catch (rollbackErro) { console.error('Erro no rollback:', rollbackErro); }
+    }
+    console.error('Erro ao editar rascunho:', erro);
+    return res.status(500).json({ erro: 'Não foi possível editar o rascunho.' });
+  } finally {
+    client?.release();
+  }
+});
+
 app.put('/gestao-datas/:id/marcador', verificarToken, somenteMaster, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1638,7 +1723,7 @@ app.post('/gestao-datas/publicar', verificarToken, somenteMaster, async (req, re
     const rascunhosRes = await client.query(`
       SELECT r.id, r.titulo, r.data_inicio::text AS data_inicio, r.data_fim::text AS data_fim,
              r.horario::text AS horario, r.duracao_minutos, r.congregacao_id,
-             r.legenda, r.marcador, c.nome AS congregacao
+             r.marcador, c.nome AS congregacao
       FROM gestao_datas_rascunho r
       JOIN congregacoes c ON c.id = r.congregacao_id
       WHERE r.master_id = $1 AND r.publicado = FALSE
@@ -1739,7 +1824,8 @@ app.post('/gestao-datas/publicar', verificarToken, somenteMaster, async (req, re
         rascunho.duracao_minutos || 60,
         rascunho.congregacao_id,
         master_id,
-        rascunho.legenda,
+        // Observações são privadas do planejamento, inclusive na publicação excepcional.
+        null,
       ]);
     }
 
