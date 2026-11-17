@@ -3,7 +3,7 @@ import { API_URL, apiFetch, getSessionToken } from '@/services/session';
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
-  StyleSheet, Text, View, ScrollView, TouchableOpacity, Modal, TextInput, ActivityIndicator, useWindowDimensions, Platform } from 'react-native';
+  StyleSheet, Text, View, ScrollView, TouchableOpacity, Pressable, Modal, TextInput, ActivityIndicator, useWindowDimensions, Platform } from 'react-native';
 
 import { router, Stack, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
@@ -21,6 +21,21 @@ const MESES = [
 ];
 
 const DIAS_SEMANA = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
+
+const horaEmMinutos = (valor: string, permitirMeiaNoite = false) => {
+  if (permitirMeiaNoite && valor === '24:00') return 1440;
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(valor)) return null;
+  const [hora, minuto] = valor.split(':').map(Number);
+  return hora * 60 + minuto;
+};
+
+const calcularHorarioFinal = (inicio: string, minutos: number, permitirVirada = false) => {
+  const inicioMinutos = horaEmMinutos(inicio);
+  if (inicioMinutos === null) return '20:00';
+  const total = inicioMinutos + minutos;
+  const fim = permitirVirada && total > 1440 ? total % 1440 : Math.min(1440, total);
+  return `${String(Math.floor(fim / 60)).padStart(2, '0')}:${String(fim % 60).padStart(2, '0')}`;
+};
 
 const ordenarEventos = (eventos: any[]) => [...eventos].sort((a, b) =>
   String(a.data_inicio).localeCompare(String(b.data_inicio)) ||
@@ -53,14 +68,14 @@ export default function TelaGestaoDatas() {
   );
   // calendar = visão mensal/anual; day, threeDays e week = agenda detalhada.
   const [modoVisualizacao, setModoVisualizacao] = useState<'calendar' | 'day' | 'threeDays' | 'week'>('calendar');
-  const [duracaoMinutos, setDuracaoMinutos] = useState('60');
 
   // Modal de criação
   const [modalCriarVisivel, setModalCriarVisivel] = useState(false);
+  const [rascunhoEditandoId, setRascunhoEditandoId] = useState<number | string | null>(null);
   const [criacaoRapidaVisivel, setCriacaoRapidaVisivel] = useState(false);
-  const [criacaoRapidaRetornoSeletor, setCriacaoRapidaRetornoSeletor] = useState(false);
+  const [listaCongregacoesAberta, setListaCongregacoesAberta] = useState(false);
   const [posicaoCriacaoRapida, setPosicaoCriacaoRapida] = useState({ left: 12, top: 80 });
-  const [horarioFimRapido, setHorarioFimRapido] = useState('20:30');
+  const [horarioFim, setHorarioFim] = useState('20:30');
   const [titulo, setTitulo] = useState('');
   const [legenda, setLegenda] = useState('');
   const [congregacaoId, setCongregacaoId] = useState('');
@@ -77,13 +92,15 @@ export default function TelaGestaoDatas() {
     useState(false);
 
   const [horario, setHorario] = useState('19:30');
-  const [modalHorarioVisivel, setModalHorarioVisivel] = useState(false);
-
-  const [horaTemp, setHoraTemp] = useState('19');
-  const [minTemp, setMinTemp] = useState('30');
-
   const [marcadorSelecionado, setMarcadorSelecionado] =
     useState('NORMAL');
+  const mostrarObservacoes = marcadorSelecionado === 'REVISAR' || marcadorSelecionado === 'CONFLITO';
+  const inicioMinutos = horaEmMinutos(horario);
+  const fimMinutos = horaEmMinutos(horarioFim, true);
+  const terminoDiaSeguinte = inicioMinutos !== null && fimMinutos !== null && fimMinutos <= inicioMinutos;
+  // Mantém os campos e botões acessíveis quando a lista ou as observações são exibidas.
+  const alturaCriacaoRapida = 470 + (listaCongregacoesAberta ? 150 : 0) + (mostrarObservacoes ? 140 : 0);
+  const topCriacaoRapida = Math.max(12, Math.min(posicaoCriacaoRapida.top, windowHeight - alturaCriacaoRapida - 12));
 
   // Modal de opções
   const [modalOpcoesVisivel, setModalOpcoesVisivel] = useState(false);
@@ -282,6 +299,8 @@ export default function TelaGestaoDatas() {
   // =====================================================
 
   const prepararCriacaoParaDia = (dataFormatada: string, horarioInicial = '19:30') => {
+    setRascunhoEditandoId(null);
+    setListaCongregacoesAberta(false);
     setDataInicio(dataFormatada);
     setDataFim(dataFormatada);
     setTitulo('');
@@ -289,16 +308,8 @@ export default function TelaGestaoDatas() {
     setCongregacaoId('');
     setNomeCongregacaoSelecionada('Selecionar congregação');
     setHorario(horarioInicial);
-    setDuracaoMinutos('60');
-    setHorarioFimRapido(calcularHorarioFinal(horarioInicial, 60));
+    setHorarioFim(calcularHorarioFinal(horarioInicial, 60));
     setMarcadorSelecionado('NORMAL');
-  };
-
-  const calcularHorarioFinal = (inicio: string, minutos: number) => {
-    const partes = /^([0-2]\d):([0-5]\d)$/.exec(inicio);
-    if (!partes) return '20:00';
-    const total = Math.min(1439, Number(partes[1]) * 60 + Number(partes[2]) + minutos);
-    return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
   };
 
   const abrirCriacaoParaDia = (dataFormatada: string, horarioInicial = '19:30') => {
@@ -309,7 +320,6 @@ export default function TelaGestaoDatas() {
 
   const abrirCriacaoRapida = (dataFormatada: string, horarioInicial: string, evento: any) => {
     prepararCriacaoParaDia(dataFormatada, horarioInicial);
-    setHorarioFimRapido(calcularHorarioFinal(horarioInicial, 60));
 
     const pageX = Number(evento?.nativeEvent?.pageX ?? evento?.nativeEvent?.clientX ?? 0);
     const pageY = Number(evento?.nativeEvent?.pageY ?? evento?.nativeEvent?.clientY ?? 0);
@@ -325,21 +335,28 @@ export default function TelaGestaoDatas() {
     setCriacaoRapidaVisivel(true);
   };
 
-  const salvarCriacaoRapida = () => {
-    const validarHora = (valor: string) => /^([01]\d|2[0-3]):([0-5]\d)$/.test(valor);
-    if (!validarHora(horario) || !validarHora(horarioFimRapido)) {
-      return mostrarDialogo('Horário inválido', 'Informe os horários no formato HH:MM.');
-    }
-    const [horaInicio, minutoInicio] = horario.split(':').map(Number);
-    const [horaFim, minutoFim] = horarioFimRapido.split(':').map(Number);
-    const inicio = horaInicio * 60 + minutoInicio;
-    const fim = horaFim * 60 + minutoFim;
-    const duracao = fim - inicio;
-    if (duracao < 15 || duracao > 1440) {
-      return mostrarDialogo('Horário inválido', 'O término deve ser posterior ao início, com duração mínima de 15 minutos.');
-    }
-    setDuracaoMinutos(String(duracao));
-    salvarEventoRascunho(duracao);
+  const abrirEdicaoRascunho = (evento: any, novoMarcador?: string) => {
+    if (!evento?.id || salvandoRef.current || publicandoRef.current) return;
+    setRascunhoEditandoId(evento.id);
+    setTitulo(String(evento.titulo || ''));
+    setDataInicio(normalizarData(evento.data_inicio));
+    setDataFim(normalizarData(evento.data_fim || evento.data_inicio));
+    const inicio = String(evento.horario || '19:30').slice(0, 5);
+    setHorario(inicio);
+    setHorarioFim(calcularHorarioFinal(inicio, Number(evento.duracao_minutos ?? 60), true));
+    setCongregacaoId(String(evento.congregacao_id || ''));
+    setNomeCongregacaoSelecionada(evento.congregacao || congregacoes.find(c => String(c.id) === String(evento.congregacao_id))?.nome || 'Selecionar congregação');
+    setMarcadorSelecionado(novoMarcador || evento.marcador || 'NORMAL');
+    setLegenda(String(evento.legenda || ''));
+    setModalOpcoesVisivel(false);
+    setEventoAtivo(null);
+    setCriacaoRapidaVisivel(false);
+    setModalCriarVisivel(true);
+  };
+
+  const fecharCriacaoRapida = () => {
+    setListaCongregacoesAberta(false);
+    setCriacaoRapidaVisivel(false);
   };
 
   // =====================================================
@@ -376,8 +393,8 @@ export default function TelaGestaoDatas() {
   // SALVAR EVENTO
   // =====================================================
 
-  const salvarEventoRascunho = async (duracaoRapida?: number) => {
-    if (salvandoRef.current) return;
+  const salvarEventoRascunho = async (criacaoRapida = false) => {
+    if (salvandoRef.current || publicandoRef.current) return;
     if (!titulo.trim()) {
       return mostrarAviso('Atenção', 'Informe o título do evento.');
     }
@@ -391,16 +408,21 @@ export default function TelaGestaoDatas() {
       return mostrarAviso('Erro', 'Sua sessão expirou. Faça login novamente.');
     }
 
-    const duracao = duracaoRapida ?? Number(duracaoMinutos);
-    if (!Number.isInteger(duracao) || duracao < 15 || duracao > 1440) {
-      return mostrarAviso('Atenção', 'Informe uma duração entre 15 e 1440 minutos.');
+    const editando = rascunhoEditandoId !== null;
+    if (inicioMinutos === null || fimMinutos === null) {
+      return mostrarAviso('Horário inválido', 'Informe os horários no formato HH:MM. O término pode ser 24:00.');
+    }
+    // Preserva atividades que terminam no dia seguinte, já permitidas no formulário completo.
+    const duracao = fimMinutos - inicioMinutos + (!criacaoRapida && terminoDiaSeguinte ? 1440 : 0);
+    if (duracao < 15 || duracao > 1440) {
+      return mostrarAviso('Horário inválido', 'A atividade deve durar pelo menos 15 minutos e no máximo 24 horas. Na criação rápida, o término deve ser posterior ao início.');
     }
 
     salvandoRef.current = true;
     setSalvandoRascunho(true);
     try {
-      const resp = await apiFetch(API_URL + '/gestao-datas', {
-        method: 'POST',
+      const resp = await apiFetch(API_URL + '/gestao-datas' + (editando ? '/' + rascunhoEditandoId : ''), {
+        method: editando ? 'PUT' : 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: 'Bearer ' + token,
@@ -412,7 +434,7 @@ export default function TelaGestaoDatas() {
           horario,
           duracao_minutos: duracao,
           congregacao_id: congregacaoId,
-          legenda,
+          ...(mostrarObservacoes ? { legenda: legenda.trim() } : {}),
           marcador: marcadorSelecionado,
         }),
       });
@@ -426,14 +448,15 @@ export default function TelaGestaoDatas() {
       // Usa o evento confirmado pela API; não precisa consultar a lista inteira novamente.
       revisaoLocalRef.current += 1;
       setEventosPlanejados(atuais => ordenarEventos([
-        ...atuais,
+        ...atuais.filter(ev => !editando || String(ev.id) !== String(rascunhoEditandoId)),
         { ...dados.evento, congregacao: congregacao?.nome || nomeCongregacaoSelecionada },
       ]));
       setModalCriarVisivel(false);
       setCriacaoRapidaVisivel(false);
+      setRascunhoEditandoId(null);
       setMensagemOperacao(dados.conflitoDetectado
         ? 'Evento salvo com conflito: revise o marcador vermelho.'
-        : 'Evento adicionado ao planejamento.');
+        : editando ? 'Evento atualizado no planejamento.' : 'Evento adicionado ao planejamento.');
       if (dados.conflitoDetectado) {
         mostrarAviso('Conflito identificado',
           'O evento foi salvo, mas existe outro evento da mesma congregação no mesmo período e horário.');
@@ -538,10 +561,10 @@ export default function TelaGestaoDatas() {
   // =====================================================
 
   const publicarNaAgendaGeral = () => {
-    if (publicandoRef.current || eventosPlanejados.length === 0) return;
+    if (publicandoRef.current || salvandoRef.current || eventosPlanejados.length === 0) return;
 
     const executarPublicacao = async (confirmarConflitos = false) => {
-      if (publicandoRef.current) return;
+      if (publicandoRef.current || salvandoRef.current) return;
       publicandoRef.current = true;
       setPublicando(true);
       const idsPublicados = new Set(eventosPlanejados.map(ev => ev.id));
@@ -907,7 +930,7 @@ export default function TelaGestaoDatas() {
                     style={styles.sideEventDescription}
                     numberOfLines={2}
                   >
-                    {ev.legenda}
+                    Observações internas: {ev.legenda}
                   </Text>
                 ) : null}
 
@@ -1097,23 +1120,23 @@ export default function TelaGestaoDatas() {
 
                   return (
                     <View key={data} style={[styles.detailedDayColumn, { width: larguraColuna, height: alturaTotal }]}>
-                      {Array.from({ length: 24 }, (_, horaIndex) => {
-                        const hora = String(horaIndex).padStart(2, '0');
+                      {Array.from({ length: 48 }, (_, slotIndex) => {
+                        const hora = String(Math.floor(slotIndex / 2)).padStart(2, '0');
+                        const minuto = slotIndex % 2 === 0 ? '00' : '30';
+                        const horarioSlot = `${hora}:${minuto}`;
                         return (
-                          <TouchableOpacity
-                            key={`hour-slot-${data}-${horaIndex}`}
-                            activeOpacity={1}
-                            style={[styles.detailedTimeSlot, { top: horaIndex * 60, height: 60 }]}
-                            onPress={(evento: any) => {
-                              // O toque é medido dentro da faixa de 60 px: acima = :00; abaixo = :30.
-                              const posicaoY = Number(evento?.nativeEvent?.locationY ?? 0);
-                              const minuto = posicaoY >= 30 ? '30' : '00';
-                              abrirCriacaoRapida(data, `${hora}:${minuto}`, evento);
-                            }}
-                            accessibilityLabel={`Criar atividade em ${data} às ${hora}:00 ou ${hora}:30`}
-                          >
-                            <View pointerEvents="none" style={styles.detailedHalfHourLine} />
-                          </TouchableOpacity>
+                          <Pressable
+                            key={`time-slot-${data}-${slotIndex}`}
+                            style={({ hovered }: { pressed: boolean; hovered?: boolean }) => [
+                              styles.detailedTimeSlot,
+                              { top: slotIndex * 30 * alturaMinuto, height: 30 * alturaMinuto },
+                              slotIndex % 2 !== 0 && styles.detailedHalfHourSlot,
+                              Platform.OS === 'web' && hovered && styles.detailedTimeSlotHovered,
+                            ]}
+                            onPress={(evento) => abrirCriacaoRapida(data, horarioSlot, evento)}
+                            accessibilityRole="button"
+                            accessibilityLabel={`Criar atividade em ${data} às ${horarioSlot}`}
+                          />
                         );
                       })}
 
@@ -1121,11 +1144,13 @@ export default function TelaGestaoDatas() {
                         const cor = obterCorFundoEvento(item.ev.marcador);
                         const larguraFaixa = 100 / item.totalFaixas;
                         const altura = Math.max(22, (item.fim - item.inicio) * alturaMinuto);
+                        const eventoCompactoWeb = Platform.OS === 'web' && altura < 37;
                         return (
                           <TouchableOpacity
                             key={`${data}-${item.ev.id}`}
                             style={[
                               styles.detailedEventBlock,
+                              eventoCompactoWeb && styles.detailedEventBlockCompact,
                               {
                                 top: item.inicio * alturaMinuto,
                                 height: altura,
@@ -1139,8 +1164,10 @@ export default function TelaGestaoDatas() {
                               setModalOpcoesVisivel(true);
                             }}
                           >
-                            <Text style={styles.detailedEventTitle} numberOfLines={2}>{item.ev.titulo}</Text>
-                            <Text style={styles.detailedEventTime} numberOfLines={1}>{item.ev.horario || '--:--'} · {item.duracao} min</Text>
+                            <Text style={[styles.detailedEventTitle, eventoCompactoWeb && styles.detailedEventTitleCompact]} numberOfLines={Platform.OS === 'web' && altura < 75 ? 1 : 2}>{item.ev.titulo}</Text>
+                            {Platform.OS !== 'web' || altura >= 30 ? (
+                              <Text style={[styles.detailedEventTime, eventoCompactoWeb && styles.detailedEventTimeCompact]} numberOfLines={1}>{String(item.ev.horario || '--:--').slice(0, 5)} – {calcularHorarioFinal(String(item.ev.horario || '').slice(0, 5), item.duracao, true)}</Text>
+                            ) : null}
                             {altura >= 58 && item.ev.congregacao ? (
                               <Text style={styles.detailedEventCongregation} numberOfLines={1}>{item.ev.congregacao}</Text>
                             ) : null}
@@ -1405,6 +1432,7 @@ export default function TelaGestaoDatas() {
         visible={modalCriarVisivel}
         animationType="slide"
         transparent
+        onRequestClose={() => { if (!salvandoRascunho) setModalCriarVisivel(false); }}
       >
         <View style={styles.modalOverlay}>
           <View
@@ -1414,7 +1442,7 @@ export default function TelaGestaoDatas() {
             ]}
           >
             <Text style={styles.modalTitle}>
-              Novo Evento no Planejamento
+              {rascunhoEditandoId !== null ? 'Editar atividade' : 'Novo Evento no Planejamento'}
             </Text>
 
             <ScrollView showsVerticalScrollIndicator={false}>
@@ -1472,35 +1500,35 @@ export default function TelaGestaoDatas() {
                 </Text>
               </TouchableOpacity>
 
-              <Text style={styles.label}>Horário de Início *</Text>
-
-              <TouchableOpacity
-                style={styles.selectorButton}
-                onPress={() => {
-                  setHoraTemp(horario.split(':')[0]);
-                  setMinTemp(horario.split(':')[1]);
-                  setModalHorarioVisivel(true);
-                }}
-              >
-                <Ionicons
-                  name="time-outline"
-                  size={20}
-                  color="#2A4B4C"
-                />
-                <Text style={styles.selectorText}>
-                  {horario}
-                </Text>
-              </TouchableOpacity>
-
-              <Text style={styles.label}>Duração da atividade (minutos)</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="60"
-                placeholderTextColor="#999"
-                keyboardType="numeric"
-                value={duracaoMinutos}
-                onChangeText={setDuracaoMinutos}
-              />
+              <View style={styles.quickCreateTimeRow}>
+                <View style={styles.quickCreateTimeField}>
+                  <Text style={styles.label}>Horário de início *</Text>
+                  <TextInput
+                    style={styles.input}
+                    accessibilityLabel="Horário de início"
+                    placeholder="18:30"
+                    placeholderTextColor="#999"
+                    maxLength={5}
+                    value={horario}
+                    onChangeText={setHorario}
+                  />
+                </View>
+                <View style={styles.quickCreateTimeField}>
+                  <Text style={styles.label}>Horário de término *</Text>
+                  <TextInput
+                    style={styles.input}
+                    accessibilityLabel="Horário de término"
+                    placeholder="20:30"
+                    placeholderTextColor="#999"
+                    maxLength={5}
+                    value={horarioFim}
+                    onChangeText={setHorarioFim}
+                  />
+                </View>
+              </View>
+              {terminoDiaSeguinte && (
+                <Text style={styles.observacaoInternaHint}>Término no dia seguinte.</Text>
+              )}
 
               <Text style={styles.label}>
                 Marcador / Status Inicial
@@ -1541,24 +1569,28 @@ export default function TelaGestaoDatas() {
                 </TouchableOpacity>
               </View>
 
-              <Text style={styles.label}>
-                Descrição / Observações
-              </Text>
-
-              <TextInput
-                style={[styles.input, styles.descInput]}
-                placeholder="Detalhes..."
-                placeholderTextColor="#999"
-                value={legenda}
-                onChangeText={setLegenda}
-                multiline
-                numberOfLines={3}
-              />
+              {mostrarObservacoes && (
+                <View>
+                  <Text style={styles.label}>Observações internas (somente MASTER)</Text>
+                  <TextInput
+                    style={[styles.input, styles.descInput]}
+                    placeholder="Motivo da revisão ou do conflito..."
+                    placeholderTextColor="#999"
+                    value={legenda}
+                    onChangeText={setLegenda}
+                    maxLength={2000}
+                    multiline
+                    numberOfLines={3}
+                  />
+                  <Text style={styles.observacaoInternaHint}>Visíveis somente no planejamento. Não serão publicadas na agenda.</Text>
+                </View>
+              )}
 
               <View style={styles.modalActionsRow}>
                 <TouchableOpacity
                   style={styles.cancelBtnModal}
                   onPress={() => setModalCriarVisivel(false)}
+                  disabled={salvandoRascunho}
                 >
                   <Text style={styles.cancelBtnText}>Cancelar</Text>
                 </TouchableOpacity>
@@ -1569,7 +1601,7 @@ export default function TelaGestaoDatas() {
                   onPress={() => void salvarEventoRascunho()}
                 >
                   <Text style={styles.saveBtnText}>
-                    {salvandoRascunho ? 'Salvando...' : 'Adicionar Evento'}
+                    {salvandoRascunho ? 'Salvando...' : rascunhoEditandoId !== null ? 'Salvar alterações' : 'Adicionar Evento'}
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -1586,22 +1618,22 @@ export default function TelaGestaoDatas() {
         transparent
         animationType="fade"
         statusBarTranslucent
-        onRequestClose={() => setCriacaoRapidaVisivel(false)}
+        onRequestClose={() => listaCongregacoesAberta ? setListaCongregacoesAberta(false) : fecharCriacaoRapida()}
       >
         <View style={styles.quickCreateOverlay}>
           <TouchableOpacity
             activeOpacity={1}
             style={styles.quickCreateBackdrop}
-            onPress={() => setCriacaoRapidaVisivel(false)}
+            onPress={fecharCriacaoRapida}
           />
           <View
             style={[
               styles.quickCreateCard,
               {
                 left: posicaoCriacaoRapida.left,
-                top: posicaoCriacaoRapida.top,
+                top: topCriacaoRapida,
                 width: Math.min(360, Math.max(240, width - 24)),
-                maxHeight: Math.max(320, windowHeight - 24),
+                maxHeight: Math.max(0, windowHeight - topCriacaoRapida - 12),
               },
             ]}
           >
@@ -1609,14 +1641,14 @@ export default function TelaGestaoDatas() {
               <Text style={styles.quickCreateTitle}>Criar atividade</Text>
               <TouchableOpacity
                 accessibilityLabel="Fechar criação rápida"
-                onPress={() => setCriacaoRapidaVisivel(false)}
+                onPress={fecharCriacaoRapida}
                 style={styles.quickCreateClose}
               >
                 <Ionicons name="close" size={20} color="#62716C" />
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={{ flexShrink: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <ScrollView style={{ flexShrink: 1 }} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={listaCongregacoesAberta || mostrarObservacoes} nestedScrollEnabled>
               <Text style={styles.quickCreateLabel}>Título</Text>
               <TextInput
                 style={styles.quickCreateInput}
@@ -1650,8 +1682,8 @@ export default function TelaGestaoDatas() {
                   <Text style={styles.quickCreateLabel}>Término</Text>
                   <TextInput
                     style={styles.quickCreateInput}
-                    value={horarioFimRapido}
-                    onChangeText={setHorarioFimRapido}
+                    value={horarioFim}
+                    onChangeText={setHorarioFim}
                     placeholder="18:00"
                     maxLength={5}
                     keyboardType="numbers-and-punctuation"
@@ -1661,17 +1693,50 @@ export default function TelaGestaoDatas() {
 
               <Text style={styles.quickCreateLabel}>Congregação</Text>
               <TouchableOpacity
-                style={styles.quickCreateSelector}
-                onPress={() => {
-                  setCriacaoRapidaRetornoSeletor(true);
-                  setCriacaoRapidaVisivel(false);
-                  setModalCongregacaoVisivel(true);
-                }}
+                style={[styles.quickCreateSelector, listaCongregacoesAberta && styles.quickCreateSelectorOpen]}
+                onPress={() => setListaCongregacoesAberta((aberta) => !aberta)}
+                accessibilityRole="button"
+                accessibilityLabel={`Congregação: ${nomeCongregacaoSelecionada}`}
+                accessibilityState={{ expanded: listaCongregacoesAberta }}
               >
                 <Ionicons name="business-outline" size={17} color="#2A4B4C" />
                 <Text style={styles.quickCreateSelectorText} numberOfLines={1}>{nomeCongregacaoSelecionada}</Text>
-                <Ionicons name="chevron-down" size={16} color="#788583" />
+                <Ionicons name={listaCongregacoesAberta ? 'chevron-up' : 'chevron-down'} size={16} color="#788583" />
               </TouchableOpacity>
+
+              {listaCongregacoesAberta && (
+                <ScrollView
+                  style={styles.quickCreateCongregationList}
+                  nestedScrollEnabled
+                  keyboardShouldPersistTaps="handled"
+                  showsVerticalScrollIndicator
+                >
+                  {congregacoes.length === 0 ? (
+                    <Text style={styles.quickCreateCongregationEmpty}>Nenhuma congregação disponível.</Text>
+                  ) : congregacoes.map((c) => {
+                    const selecionada = congregacaoId === String(c.id);
+                    return (
+                      <Pressable
+                        key={String(c.id)}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: selecionada }}
+                        onPress={() => {
+                          setCongregacaoId(String(c.id));
+                          setNomeCongregacaoSelecionada(c.nome);
+                          setListaCongregacoesAberta(false);
+                        }}
+                        style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => [
+                          styles.quickCreateCongregationOption,
+                          (pressed || hovered || selecionada) && styles.quickCreateCongregationOptionActive,
+                        ]}
+                      >
+                        <Text style={styles.quickCreateCongregationOptionText}>{c.nome}</Text>
+                        {selecionada && <Ionicons name="checkmark" size={17} color="#2A4B4C" />}
+                      </Pressable>
+                    );
+                  })}
+                </ScrollView>
+              )}
 
               <Text style={styles.quickCreateLabel}>Marcador</Text>
               <View style={styles.quickCreateMarkerRow}>
@@ -1694,30 +1759,31 @@ export default function TelaGestaoDatas() {
                 ))}
               </View>
 
-              <TouchableOpacity
-                style={styles.quickCreateMore}
-                onPress={() => {
-                  const inicio = horario.split(':').map(Number);
-                  const fim = horarioFimRapido.split(':').map(Number);
-                  if (inicio.length === 2 && fim.length === 2 && fim[0] * 60 + fim[1] > inicio[0] * 60 + inicio[1]) {
-                    setDuracaoMinutos(String((fim[0] * 60 + fim[1]) - (inicio[0] * 60 + inicio[1])));
-                  }
-                  setCriacaoRapidaVisivel(false);
-                  setModalCriarVisivel(true);
-                }}
-              >
-                <Ionicons name="options-outline" size={16} color="#2A4B4C" />
-                <Text style={styles.quickCreateMoreText}>Mais opções e descrição</Text>
-              </TouchableOpacity>
+              {mostrarObservacoes && (
+                <View>
+                  <Text style={styles.quickCreateLabel}>Observações internas</Text>
+                  <TextInput
+                    style={[styles.quickCreateInput, styles.descInput]}
+                    placeholder="Motivo da revisão ou do conflito..."
+                    placeholderTextColor="#929B98"
+                    value={legenda}
+                    onChangeText={setLegenda}
+                    maxLength={2000}
+                    multiline
+                    numberOfLines={3}
+                  />
+                  <Text style={styles.observacaoInternaHint}>Somente MASTER. Não serão publicadas.</Text>
+                </View>
+              )}
 
               <View style={styles.quickCreateActions}>
-                <TouchableOpacity style={styles.quickCreateCancel} onPress={() => setCriacaoRapidaVisivel(false)}>
+                <TouchableOpacity style={styles.quickCreateCancel} onPress={fecharCriacaoRapida}>
                   <Text style={styles.quickCreateCancelText}>Cancelar</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[styles.quickCreateSave, salvandoRascunho && { opacity: 0.6 }]}
                   disabled={salvandoRascunho}
-                  onPress={salvarCriacaoRapida}
+                  onPress={() => void salvarEventoRascunho(true)}
                 >
                   <Text style={styles.quickCreateSaveText}>
                     {salvandoRascunho ? 'Salvando...' : 'Salvar'}
@@ -1754,10 +1820,30 @@ export default function TelaGestaoDatas() {
                   .join('/')
                 : ''}
               {'  •  '}
-              {eventoAtivo?.horario}
-              {'  •  '}
-              {eventoAtivo?.duracao_minutos || 60} min
+              {String(eventoAtivo?.horario || '').slice(0, 5)}
+              {' – '}
+              {calcularHorarioFinal(String(eventoAtivo?.horario || '').slice(0, 5), Number(eventoAtivo?.duracao_minutos ?? 60), true)}
             </Text>
+
+            {!!eventoAtivo?.legenda?.trim() && (
+              <View style={styles.observacaoInternaBox}>
+                <Text style={styles.label}>Observações internas</Text>
+                <ScrollView style={{ maxHeight: 100 }} nestedScrollEnabled>
+                  <Text style={styles.observacaoInternaText}>{eventoAtivo.legenda}</Text>
+                </ScrollView>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={[styles.optionBtn, { backgroundColor: '#2A4B4C' }]}
+              onPress={() => abrirEdicaoRascunho(eventoAtivo)}
+              accessibilityRole="button"
+              accessibilityLabel="Editar informações da atividade"
+            >
+              <Text style={{ color: '#FFFFFF', fontWeight: 'bold' }}>
+                <Ionicons name="create-outline" size={16} color="#FFFFFF" /> Editar atividade
+              </Text>
+            </TouchableOpacity>
 
             <Text style={styles.subModalLabel}>
               Alterar Marcador:
@@ -1774,7 +1860,7 @@ export default function TelaGestaoDatas() {
 
             <TouchableOpacity
               style={[styles.optionBtn, { backgroundColor: '#FFFDE7' }]}
-              onPress={() => alterarMarcadorEvento('REVISAR')}
+              onPress={() => abrirEdicaoRascunho(eventoAtivo, 'REVISAR')}
             >
               <Text style={{ color: '#F57F17', fontWeight: 'bold' }}>
                 🟡 Marcar para Revisar
@@ -1783,7 +1869,7 @@ export default function TelaGestaoDatas() {
 
             <TouchableOpacity
               style={[styles.optionBtn, { backgroundColor: '#FFEBEE' }]}
-              onPress={() => alterarMarcadorEvento('CONFLITO')}
+              onPress={() => abrirEdicaoRascunho(eventoAtivo, 'CONFLITO')}
             >
               <Text style={{ color: '#C62828', fontWeight: 'bold' }}>
                 🔴 Marcar como Conflito / Atenção
@@ -1836,10 +1922,6 @@ export default function TelaGestaoDatas() {
                     setCongregacaoId(String(c.id));
                     setNomeCongregacaoSelecionada(c.nome);
                     setModalCongregacaoVisivel(false);
-                    if (criacaoRapidaRetornoSeletor) {
-                      setCriacaoRapidaRetornoSeletor(false);
-                      setCriacaoRapidaVisivel(true);
-                    }
                   }}
                 >
                   <Text style={styles.modalOptionText}>
@@ -1851,13 +1933,7 @@ export default function TelaGestaoDatas() {
 
             <TouchableOpacity
               style={styles.closeModalBtn}
-              onPress={() => {
-                setModalCongregacaoVisivel(false);
-                if (criacaoRapidaRetornoSeletor) {
-                  setCriacaoRapidaRetornoSeletor(false);
-                  setCriacaoRapidaVisivel(true);
-                }
-              }}
+              onPress={() => setModalCongregacaoVisivel(false)}
             >
               <Text style={styles.closeModalText}>Cancelar</Text>
             </TouchableOpacity>
@@ -1952,73 +2028,6 @@ export default function TelaGestaoDatas() {
         </View>
       </Modal>
 
-      {/* ================================================= */}
-      {/* MODAL DE HORÁRIO */}
-      {/* ================================================= */}
-
-      <Modal
-        visible={modalHorarioVisivel}
-        animationType="slide"
-        transparent
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>Horário de Início</Text>
-
-            <View style={styles.timeRow}>
-              <TextInput
-                style={styles.timeInput}
-                keyboardType="numeric"
-                maxLength={2}
-                value={horaTemp}
-                onChangeText={setHoraTemp}
-              />
-
-              <Text style={styles.timeSeparator}>:</Text>
-
-              <TextInput
-                style={styles.timeInput}
-                keyboardType="numeric"
-                maxLength={2}
-                value={minTemp}
-                onChangeText={setMinTemp}
-              />
-            </View>
-
-            <TouchableOpacity
-              style={styles.confirmButtonModal}
-              onPress={() => {
-                const hora = parseInt(horaTemp, 10);
-                const minuto = parseInt(minTemp, 10);
-
-                if (
-                  !Number.isInteger(hora) ||
-                  !Number.isInteger(minuto) ||
-                  hora < 0 ||
-                  hora > 23 ||
-                  minuto < 0 ||
-                  minuto > 59
-                ) {
-                  return mostrarDialogo(
-                    'Horário inválido',
-                    'Informe uma hora entre 00 e 23 e minutos entre 00 e 59.'
-                  );
-                }
-
-                setHorario(
-                  `${String(hora).padStart(2, '0')}:${String(minuto).padStart(2, '0')}`
-                );
-
-                setModalHorarioVisivel(false);
-              }}
-            >
-              <Text style={styles.confirmButtonText}>
-                Confirmar Horário
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 }
@@ -2713,13 +2722,15 @@ const styles = StyleSheet.create({
     borderTopColor: '#DCE4DF',
     zIndex: 0,
   },
-  detailedHalfHourLine: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    top: 30,
-    borderTopWidth: StyleSheet.hairlineWidth,
+  detailedHalfHourSlot: {
     borderTopColor: '#EDF0ED',
+  },
+  detailedTimeSlotHovered: {
+    backgroundColor: '#2A4B4C12',
+    borderWidth: 2,
+    borderTopWidth: 2,
+    borderColor: '#2A4B4C',
+    borderTopColor: '#2A4B4C',
   },
   detailedEventBlock: {
     position: 'absolute',
@@ -2733,19 +2744,33 @@ const styles = StyleSheet.create({
   },
   detailedEventTitle: {
     color: '#FFFFFF',
-    fontSize: 10,
-    lineHeight: 12,
+    fontSize: Platform.OS === 'web' ? 14 : 10,
+    lineHeight: Platform.OS === 'web' ? 17 : 12,
     fontWeight: 'bold',
   },
   detailedEventTime: {
     color: '#FFFFFF',
-    fontSize: 9,
+    fontSize: Platform.OS === 'web' ? 12 : 9,
+    ...(Platform.OS === 'web' ? { lineHeight: 15 } : {}),
     marginTop: 2,
   },
   detailedEventCongregation: {
     color: '#FFFFFF',
-    fontSize: 9,
+    fontSize: Platform.OS === 'web' ? 12 : 9,
+    ...(Platform.OS === 'web' ? { lineHeight: 15 } : {}),
     marginTop: 2,
+  },
+  detailedEventBlockCompact: {
+    paddingVertical: 1,
+  },
+  detailedEventTitleCompact: {
+    fontSize: 12,
+    lineHeight: 14,
+  },
+  detailedEventTimeCompact: {
+    fontSize: 11,
+    lineHeight: 12,
+    marginTop: 0,
   },
 
   // Janela contextual de criação rápida
@@ -2841,6 +2866,40 @@ const styles = StyleSheet.create({
     color: '#263A35',
     fontSize: 12,
   },
+  quickCreateSelectorOpen: {
+    borderColor: '#2A4B4C',
+  },
+  quickCreateCongregationList: {
+    maxHeight: 176,
+    marginTop: 5,
+    borderWidth: 1,
+    borderColor: '#D8E0DA',
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+  },
+  quickCreateCongregationOption: {
+    minHeight: 36,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#EDF0ED',
+  },
+  quickCreateCongregationOptionActive: {
+    backgroundColor: '#E2EAE9',
+  },
+  quickCreateCongregationOptionText: {
+    flex: 1,
+    color: '#2A4B4C',
+    fontSize: 13,
+  },
+  quickCreateCongregationEmpty: {
+    padding: 12,
+    color: '#52615D',
+    fontSize: 12,
+  },
   quickCreateMarkerRow: {
     flexDirection: 'row',
     gap: 6,
@@ -2867,23 +2926,11 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '600',
   },
-  quickCreateMore: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingVertical: 10,
-    marginTop: 2,
-  },
-  quickCreateMoreText: {
-    color: '#2A4B4C',
-    fontSize: 12,
-    fontWeight: '700',
-  },
   quickCreateActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     gap: 8,
-    marginTop: 4,
+    marginTop: 12,
   },
   quickCreateCancel: {
     paddingHorizontal: 15,
@@ -3029,6 +3076,27 @@ const styles = StyleSheet.create({
   descInput: {
     minHeight: 70,
     textAlignVertical: 'top',
+  },
+
+  observacaoInternaHint: {
+    color: '#526564',
+    fontSize: 11,
+    marginTop: 6,
+    lineHeight: 16,
+  },
+
+  observacaoInternaBox: {
+    backgroundColor: '#F4F5F0',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingBottom: 10,
+    marginBottom: 12,
+  },
+
+  observacaoInternaText: {
+    color: '#2A4B4C',
+    fontSize: 13,
+    lineHeight: 19,
   },
 
   selectorButton: {
@@ -3253,29 +3321,4 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
 
-  // Horário
-  timeRow: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginVertical: 20,
-  },
-
-  timeInput: {
-    width: 60,
-    height: 55,
-    backgroundColor: '#F0F0F0',
-    borderRadius: 10,
-    textAlign: 'center',
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#2A4B4C',
-  },
-
-  timeSeparator: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    marginHorizontal: 10,
-    color: '#2A4B4C',
-  },
 });
