@@ -9,7 +9,7 @@ const bytes = Buffer.from('conteudo-imagem-de-teste');
 const imagem = 'data:image/png;base64,' + bytes.toString('base64');
 const usuario = { id: 1, nivel_acesso: 'MEMBRO', status_conta: 'APROVADO', congregacao_id: 10, token_version: 0 };
 
-function setup({ imagemExiste = true } = {}) {
+function setup({ imagemExiste = true, role = 'MEMBRO', storage = null } = {}) {
   const routes = new Map();
   const queries = [];
   const app = { use() {}, listen() {}, disable() {}, set() {} };
@@ -29,7 +29,13 @@ function setup({ imagemExiste = true } = {}) {
   ];
   const pool = { async query(sql, values = []) {
     queries.push({ sql, values });
-    if (sql.includes('SELECT id, nivel_acesso, status_conta')) return { rows: [usuario], rowCount: 1 };
+    if (sql.includes('SELECT id, nivel_acesso, status_conta')) return { rows: [{ ...usuario, nivel_acesso: role }], rowCount: 1 };
+    if (sql.includes('INSERT INTO mural_eventos')) return { rows: [{ id: 30, midia: values[6] }], rowCount: 1 };
+    if (sql.includes('SELECT * FROM mural_eventos WHERE id')) {
+      const rows = posts.filter(p => p.id === Number(values[0]));
+      return { rows, rowCount: rows.length };
+    }
+    if (sql.includes('DELETE FROM mural_eventos WHERE id')) return { rowCount: 1 };
     if (sql.includes('FROM mural_eventos m')) {
       const modoLeve = sql.includes('midia_embutida');
       const rows = posts.map(post => ({
@@ -52,20 +58,22 @@ function setup({ imagemExiste = true } = {}) {
     dotenv: { config() {} }, 'node:crypto': crypto,
     'express-rate-limit': { rateLimit: () => (_req, _res, next) => next() },
     jsonwebtoken: { verify: () => ({ id: 1, token_version: 0 }), sign: () => 'token' },
+    './services/mural-media': { createMuralStorage: () => storage },
+    './services/cloudinary-media': { createCloudinaryMedia: () => ({}) },
   };
   const source = fs.readFileSync(path.join(__dirname, '../server.js'), 'utf8')
     .replace(/iniciarServidor\(\);\s*$/, '');
   vm.runInNewContext(source, {
     require(name) { if (!(name in mocks)) throw new Error('Dependência inesperada: ' + name); return mocks[name]; },
-    process: { env: { JWT_SECRET: 'mural-imagens-chave-de-teste' } },
+    process: { env: { JWT_SECRET: 'mural-imagens-chave-de-teste', ...(storage ? { CLOUDINARY_MURAL_ENABLED: 'true' } : {}) } },
     Buffer, Date, console: { error() {} },
   });
 
-  async function call(route, { query = {}, params = {}, auth = 'Bearer valido' } = {}) {
+  async function call(route, { query = {}, params = {}, body = {}, auth = 'Bearer valido' } = {}) {
     const [method, url] = route.split(' ');
     const handlers = routes.get(method + ' ' + url);
     assert.ok(handlers, 'Rota não encontrada: ' + route);
-    const req = { headers: { authorization: auth }, query, params, body: {} };
+    const req = { headers: { authorization: auth }, query, params, body };
     const res = {
       code: 200, headers: {},
       set(header, value) { this.headers[header] = value; return this; },
@@ -147,3 +155,65 @@ test('uma URL externa nunca é usada como proxy do banco de dados', async () => 
   });
   assert.equal(r.code, 403);
 });
+
+const body = { titulo: 'Teste', tipo_midia: 'imagem', midia: imagem, data_inicio: '2026-12-01', data_fim: '2026-12-02' };
+
+test('flag desativada preserva o fluxo antigo de criação', async () => {
+  const s = setup({ role: 'ADMIN' });
+  const r = await s.call('post /mural', { body });
+  assert.equal(r.code, 201);
+  assert.equal(r.data.post.midia, imagem);
+});
+
+test('flag ativada encaminha Base64 ao armazenamento, mantendo resposta compatível com clientes', async () => {
+  let sent;
+  const url = 'https://res.cloudinary.com/test/image/upload/v1/test.png';
+  const s = setup({ role: 'ADMIN', storage: { async createPost(query, values) {
+    assert.match(query, /INSERT INTO mural_eventos/);
+    sent = values[6];
+    return { rows: [{ id: 30, midia: url }] };
+  } } });
+  const r = await s.call('post /mural', { body });
+  assert.equal(r.code, 201);
+  assert.equal(sent, imagem);
+  assert.equal(r.data.post.midia, url);
+});
+
+test('URLs externas continuam compatíveis e não são enviadas ao provedor', async () => {
+  const s = setup({ role: 'ADMIN', storage: { async createPost() { assert.fail('upload inesperado'); } } });
+  const url = 'https://example.org/image.png';
+  const r = await s.call('post /mural', { body: { ...body, midia: url } });
+  assert.equal(r.code, 201);
+  assert.equal(r.data.post.midia, url);
+});
+
+test('falha do armazenamento retorna erro controlado sem gravar Base64', async () => {
+  const s = setup({ role: 'ADMIN', storage: { async createPost() { throw Object.assign(new Error('segredo'), { name: 'MediaStorageError' }); } } });
+  const r = await s.call('post /mural', { body });
+  assert.equal(r.code, 502);
+  assert.doesNotMatch(JSON.stringify(r.data), /segredo/);
+  assert.equal(s.queries.some(q => q.sql.includes('INSERT INTO mural_eventos')), false);
+});
+
+test('membro não aciona upload ou limpeza', async () => {
+  const s = setup({ storage: { async createPost() { assert.fail('upload não autorizado'); }, async findByPost() { assert.fail('limpeza não autorizada'); } } });
+  assert.equal((await s.call('post /mural', { body })).code, 403);
+  assert.equal((await s.call('delete /mural/:id', { params: { id: '21' } })).code, 403);
+});
+
+test('exclusão sem asset registrado não aciona Cloudinary', async () => {
+  const s = setup({ role: 'ADMIN', storage: { async findByPost() { return null; }, async cleanupOne() { assert.fail('limpeza de mídia externa'); } } });
+  assert.equal((await s.call('delete /mural/:id', { params: { id: '22' } })).code, 200);
+});
+
+test('falha na limpeza não impede exclusão já confirmada do post', async () => {
+  let cleaned;
+  const s = setup({ role: 'ADMIN', storage: { async findByPost() { return 'internal-id'; }, async cleanupOne(id) {
+    cleaned = id;
+    assert.ok(s.queries.some(q => q.sql.includes('DELETE FROM mural_eventos')));
+    throw new Error('temporariamente indisponível');
+  } } });
+  assert.equal((await s.call('delete /mural/:id', { params: { id: '21' } })).code, 200);
+  assert.equal(cleaned, 'internal-id');
+});
+
