@@ -203,6 +203,29 @@ const pool = new Pool({
     : undefined,
 });
 
+// Ativação explícita após migração e homologação. Sem a flag, o mural legado
+// permanece inalterado, inclusive para clientes que enviam Base64.
+const muralMedia = process.env.CLOUDINARY_MURAL_ENABLED === 'true'
+  ? require('./services/mural-media').createMuralStorage({
+      pool, media: require('./services/cloudinary-media').createCloudinaryMedia(),
+    })
+  : null;
+
+const profileMedia = process.env.CLOUDINARY_PROFILE_ENABLED === 'true' ? (() => {
+  const media = require('./services/cloudinary-profile-media').createCloudinaryProfileMedia();
+  const { createProfileLinks, createProfileStorage } = require('./services/profile-photo-storage');
+  const links = createProfileLinks({ media, jwtSecret: JWT_SECRET, origin: process.env.PROFILE_MEDIA_BASE_URL });
+  return createProfileStorage({ pool, media, links });
+})() : null;
+const fotoParaCliente = (foto, owner, viewer) => profileMedia ? profileMedia.links.issue(foto, owner, viewer) : foto;
+const perfilParaCliente = (row, viewer) => profileMedia && row ? { ...row, foto_perfil: fotoParaCliente(row.foto_perfil, row.id, viewer) } : row;
+const autorParaCliente = (row, viewer) => profileMedia && row ? { ...row, autor_foto: fotoParaCliente(row.autor_foto, row.usuario_id, viewer) } : row;
+const erroFotoPerfil = (error, res) => {
+  if (error?.name === 'MediaInputError') { res.status(400).json({ erro: 'Foto de perfil inválida. Atualize a sessão ou escolha outra imagem.' }); return true; }
+  if (error?.name === 'MediaStorageError') { res.status(502).json({ erro: 'Não foi possível carregar ou armazenar a foto.' }); return true; }
+  return false;
+};
+
 // === ROTA DE CADASTRO DE USUÁRIO ===
 app.post('/cadastro', cadastroLimiter, async (req, res) => {
   try {
@@ -240,13 +263,14 @@ app.post('/cadastro', cadastroLimiter, async (req, res) => {
       RETURNING id, nome_completo, nome_exibicao, email, nivel_acesso, status_conta;
     `;
     const valores = [nome_completo, email, senhaHash, congregacao_id, cpf, telefone, foto_perfil || null];
-    const resultado = await pool.query(query, valores);
+    const resultado = profileMedia ? await profileMedia.createUser(query, valores) : await pool.query(query, valores);
 
     res.status(201).json({ 
       mensagem: 'Usuário cadastrado com sucesso! Aguarde aprovação do Master.', 
       usuario: resultado.rows[0] 
     });
   } catch (erro) {
+    if (erroFotoPerfil(erro, res)) return;
     console.error('Erro no cadastro:', erro);
     if (erro?.code === '23505') {
       return res.status(409).json({ erro: 'Não foi possível concluir o cadastro com os dados informados.' });
@@ -310,7 +334,7 @@ app.post('/login', loginLimiter, async (req, res) => {
         nivel_acesso: usuario.nivel_acesso,
         status_conta: usuario.status_conta,
         congregacao_id: usuario.congregacao_id,
-        foto_perfil: usuario.foto_perfil,
+        foto_perfil: fotoParaCliente(usuario.foto_perfil, usuario.id, usuario),
         telefone: usuario.telefone,
         cpf: usuario.cpf,
         bio: usuario.bio
@@ -391,7 +415,7 @@ app.get('/sessao', verificarToken, async (req, res) => {
     `, [req.usuario.id]);
     if (!resultado.rowCount) return res.status(401).json({ erro: 'Sessão inválida. Faça login novamente.' });
     res.set('Cache-Control', 'no-store');
-    res.json({ usuario: resultado.rows[0] });
+    res.json({ usuario: perfilParaCliente(resultado.rows[0], req.usuario) });
   } catch (erro) {
     console.error('Erro ao carregar sessão:', erro);
     res.status(500).json({ erro: 'Não foi possível carregar sua sessão.' });
@@ -860,7 +884,7 @@ app.get('/usuarios', verificarToken, somenteGestores, async (req, res) => {
     query += ` ORDER BY CASE WHEN u.status_conta = 'PENDENTE' THEN 1 ELSE 2 END, u.data_cadastro DESC;`;
 
     const resultado = await pool.query(query, valores);
-    res.json(resultado.rows);
+    res.json(resultado.rows.map(row => perfilParaCliente(row, req.usuario)));
   } catch (erro) {
     console.error("Erro ao buscar usuários:", erro);
     res.status(500).json({ erro: "Erro interno ao buscar usuários." });
@@ -945,7 +969,7 @@ app.put('/usuarios/:id/congregacao', verificarToken, somenteMaster, async (req, 
       WHERE u.id = $1;
     `, [id]);
 
-    res.json({ mensagem: "Congregação do usuário atualizada com sucesso!", usuario: usuarioAtualizado.rows[0] });
+    res.json({ mensagem: "Congregação do usuário atualizada com sucesso!", usuario: perfilParaCliente(usuarioAtualizado.rows[0], req.usuario) });
   } catch (erro) {
     console.error("Erro ao atualizar congregação:", erro);
     res.status(500).json({ erro: "Erro ao atualizar congregação do usuário." });
@@ -958,7 +982,7 @@ app.put('/usuarios/perfil', verificarToken, async (req, res) => {
     const { nome_exibicao, bio, foto_perfil } = req.body;
 
     if (!textoValido(nome_exibicao, 2, 120) ||
-        (bio != null && !textoValido(bio, 0, 500)) || !imagemValida(foto_perfil)) {
+        (bio != null && !textoValido(bio, 0, 500)) || (!imagemValida(foto_perfil) && !profileMedia?.links.reserved(foto_perfil))) {
       return res.status(400).json({ erro: 'Nome, biografia ou foto inválidos.' });
     }
 
@@ -969,15 +993,35 @@ app.put('/usuarios/perfil', verificarToken, async (req, res) => {
       RETURNING id, nome_completo, nome_exibicao, email, nivel_acesso, status_conta, congregacao_id, foto_perfil, telefone, cpf, bio;
     `;
     const valores = [nome_exibicao.trim(), bio?.trim() || null, foto_perfil || null, usuario_id];
-    const resultado = await pool.query(query, valores);
+    const resultado = profileMedia ? await profileMedia.updateUser(query, valores, req.usuario) : await pool.query(query, valores);
 
     res.json({ 
       mensagem: "Perfil atualizado com sucesso!", 
-      usuario: resultado.rows[0] 
+      usuario: perfilParaCliente(resultado.rows[0], req.usuario)
     });
   } catch (erro) {
+    if (erroFotoPerfil(erro, res)) return;
     console.error("Erro ao atualizar perfil:", erro);
     res.status(500).json({ erro: "Erro interno ao atualizar perfil." });
+  }
+});
+
+// O link autoriza apenas uma foto, a um usuário com sessão ainda válida.
+// O provedor nunca é exposto ao navegador e fotos não entram no mural público.
+app.get('/usuarios/:id/foto', async (req, res) => {
+  if (!profileMedia) return res.status(404).json({ erro: 'Foto não encontrada.' });
+  if (!idValido(req.params.id) || !profileMedia.links.validate(req.params.id, req.query)) return res.status(403).json({ erro: 'Link de foto inválido ou expirado.' });
+  try {
+    const picture = await profileMedia.get(req.params.id, req.query);
+    if (!picture) return res.status(404).json({ erro: 'Foto não encontrada.' });
+    res.set('Content-Type', picture.mime);
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('X-Robots-Tag', 'noindex');
+    res.set('Cache-Control', 'private, no-store');
+    return res.send(picture.bytes);
+  } catch (error) {
+    if (erroFotoPerfil(error, res)) return;
+    return res.status(500).json({ erro: 'Erro ao carregar foto.' });
   }
 });
 
@@ -1037,11 +1081,20 @@ app.post('/mural', verificarToken, somenteGestores, async (req, res) => {
       data_inicio,
       data_fim,
     ];
-    const resultado = await pool.query(query, valores);
+    const resultado = muralMedia && IMAGE_RE.test(midia)
+      ? await muralMedia.createPost(query, valores)
+      : await pool.query(query, valores);
 
     res.status(201).json({ mensagem: "Post criado com sucesso!", post: resultado.rows[0] });
   } catch (erro) {
-    console.error("Erro ao criar post no mural:", erro);
+    if (erro?.name === 'MediaInputError') {
+      return res.status(400).json({ erro: 'Imagem inválida ou formato não permitido.' });
+    }
+    if (erro?.name === 'MediaStorageError') {
+      console.error('Falha no armazenamento da imagem do mural.');
+      return res.status(502).json({ erro: 'Não foi possível armazenar a imagem. Tente novamente.' });
+    }
+    console.error("Erro ao criar post no mural:", erro?.code || erro?.name);
     res.status(500).json({ erro: "Erro interno ao criar publicação." });
   }
 });
@@ -1137,7 +1190,7 @@ app.get('/mural', verificarToken, async (req, res) => {
       usuario_id: post.usuario_id,
       congregacao_id: post.congregacao_id,
       autor: post.autor,
-      autor_foto: post.autor_foto,
+      autor_foto: fotoParaCliente(post.autor_foto, post.usuario_id, req.usuario),
       titulo: post.titulo,
       descricao: post.descricao,
       local: post.local,
@@ -1214,7 +1267,17 @@ app.delete('/mural/:id', verificarToken, somenteGestores, async (req, res) => {
       return res.status(403).json({ erro: "Você não tem permissão para excluir este post." });
     }
 
+    // Só retorna IDs registrados pelo serviço, nunca derivados de URLs do usuário.
+    const mediaId = muralMedia ? await muralMedia.findByPost(post_id) : null;
     await pool.query('DELETE FROM mural_eventos WHERE id = $1', [post_id]);
+    if (mediaId) {
+      try {
+        await muralMedia.cleanupOne(mediaId, { allowRecent: true });
+      } catch {
+        // O post foi excluído; a FK deixou o asset registrado para limpeza posterior.
+        console.error('Imagem do mural pendente de limpeza.');
+      }
+    }
     res.json({ mensagem: "Post excluído com sucesso!" });
   } catch (erro) {
     console.error("Erro ao excluir post:", erro);
@@ -1268,7 +1331,7 @@ app.get('/mural/:id/comentarios', verificarToken, async (req, res) => {
       ORDER BY c.criado_em ASC;
     `;
     const resultado = await pool.query(query, [post_id, usuario_atual_id]);
-    res.json(resultado.rows);
+    res.json(resultado.rows.map(row => autorParaCliente(row, req.usuario)));
   } catch (erro) {
     console.error("Erro ao buscar comentários:", erro);
     res.status(500).json({ erro: "Erro ao carregar comentários." });
@@ -1309,7 +1372,7 @@ app.post('/mural/:id/comentarios', verificarToken, verificarAprovacao, async (re
       WHERE c.id = $1;
     `, [resultado.rows[0].id]);
 
-    res.status(201).json(comentarioCriado.rows[0]);
+    res.status(201).json(autorParaCliente(comentarioCriado.rows[0], req.usuario));
   } catch (erro) {
     console.error("Erro ao criar comentário:", erro);
     if (erro?.code === '23503') return res.status(404).json({ erro: 'Publicação não encontrada.' });
@@ -1397,7 +1460,7 @@ app.get('/usuarios/:id/perfil-publico', verificarToken, async (req, res) => {
     if (resultado.rowCount === 0) {
       return res.status(404).json({ erro: "Usuário não encontrado." });
     }
-    res.json(resultado.rows[0]);
+    res.json(perfilParaCliente(resultado.rows[0], req.usuario));
   } catch (erro) {
     console.error("Erro ao buscar perfil público:", erro);
     res.status(500).json({ erro: "Erro ao carregar perfil." });
@@ -1884,3 +1947,4 @@ const iniciarServidor = async () => {
 };
 
 iniciarServidor();
+
