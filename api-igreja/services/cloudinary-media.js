@@ -31,13 +31,14 @@ function validateImage(dataUri, maxBytes) {
   if (bytes.length > maxBytes || bytes.toString('base64') !== match[2]) {
     throw new MediaInputError('Imagem Base64 inválida ou acima do limite.');
   }
-  const type = match[1];
-  const valid = type === 'jpeg'
-    ? bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
-    : type === 'png'
-      ? bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))
-      : bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP';
-  if (!valid) throw new MediaInputError('O conteúdo não corresponde ao formato informado.');
+  // Versões anteriores do app rotulam qualquer imagem selecionada como JPEG.
+  // Detecta o formato real e limita aos três tipos permitidos, sem confiar no MIME.
+  let type;
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) type = 'jpeg';
+  else if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) type = 'png';
+  else if (bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') type = 'webp';
+  if (!type) throw new MediaInputError('O conteúdo não corresponde a um formato permitido.');
+  return `data:image/${type};base64,${match[2]}`;
 }
 
 function createCloudinaryMedia({ env = process.env, fetchImpl = globalThis.fetch, timeoutMs = 20000 } = {}) {
@@ -73,10 +74,10 @@ function createCloudinaryMedia({ env = process.env, fetchImpl = globalThis.fetch
   }
 
   async function uploadMuralImage(dataUri, publicId = newMuralPublicId()) {
-    validateImage(dataUri, maxBytes);
+    const normalizedImage = validateImage(dataUri, maxBytes);
     if (!PUBLIC_ID_RE.test(publicId || '')) throw new TypeError('Identificador de mídia inválido.');
     const data = await request('upload', {
-      file: dataUri, asset_folder: ASSET_FOLDER, public_id: publicId,
+      file: normalizedImage, asset_folder: ASSET_FOLDER, public_id: publicId,
       overwrite: 'false', allowed_formats: 'jpg,jpeg,png,webp',
     });
     let url;
