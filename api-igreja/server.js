@@ -203,6 +203,14 @@ const pool = new Pool({
     : undefined,
 });
 
+// Ativação explícita após migração e homologação. Sem a flag, o mural legado
+// permanece inalterado, inclusive para clientes que enviam Base64.
+const muralMedia = process.env.CLOUDINARY_MURAL_ENABLED === 'true'
+  ? require('./services/mural-media').createMuralStorage({
+      pool, media: require('./services/cloudinary-media').createCloudinaryMedia(),
+    })
+  : null;
+
 // === ROTA DE CADASTRO DE USUÁRIO ===
 app.post('/cadastro', cadastroLimiter, async (req, res) => {
   try {
@@ -1037,11 +1045,20 @@ app.post('/mural', verificarToken, somenteGestores, async (req, res) => {
       data_inicio,
       data_fim,
     ];
-    const resultado = await pool.query(query, valores);
+    const resultado = muralMedia && IMAGE_RE.test(midia)
+      ? await muralMedia.createPost(query, valores)
+      : await pool.query(query, valores);
 
     res.status(201).json({ mensagem: "Post criado com sucesso!", post: resultado.rows[0] });
   } catch (erro) {
-    console.error("Erro ao criar post no mural:", erro);
+    if (erro?.name === 'MediaInputError') {
+      return res.status(400).json({ erro: 'Imagem inválida ou formato não permitido.' });
+    }
+    if (erro?.name === 'MediaStorageError') {
+      console.error('Falha no armazenamento da imagem do mural.');
+      return res.status(502).json({ erro: 'Não foi possível armazenar a imagem. Tente novamente.' });
+    }
+    console.error("Erro ao criar post no mural:", erro?.code || erro?.name);
     res.status(500).json({ erro: "Erro interno ao criar publicação." });
   }
 });
@@ -1214,7 +1231,17 @@ app.delete('/mural/:id', verificarToken, somenteGestores, async (req, res) => {
       return res.status(403).json({ erro: "Você não tem permissão para excluir este post." });
     }
 
+    // Só retorna IDs registrados pelo serviço, nunca derivados de URLs do usuário.
+    const mediaId = muralMedia ? await muralMedia.findByPost(post_id) : null;
     await pool.query('DELETE FROM mural_eventos WHERE id = $1', [post_id]);
+    if (mediaId) {
+      try {
+        await muralMedia.cleanupOne(mediaId, { allowRecent: true });
+      } catch {
+        // O post foi excluído; a FK deixou o asset registrado para limpeza posterior.
+        console.error('Imagem do mural pendente de limpeza.');
+      }
+    }
     res.json({ mensagem: "Post excluído com sucesso!" });
   } catch (erro) {
     console.error("Erro ao excluir post:", erro);
@@ -1884,3 +1911,4 @@ const iniciarServidor = async () => {
 };
 
 iniciarServidor();
+
