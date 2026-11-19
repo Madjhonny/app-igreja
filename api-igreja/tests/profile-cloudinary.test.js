@@ -75,3 +75,25 @@ test('entrega exige vínculo atual e sessão ainda aprovada ou pendente', async 
   row = null; assert.equal(await storage.get(8, params(link)), null);
   assert.equal(await storage.get(8, { ...params(link), sig: '0'.repeat(64) }), null);
 });
+test('edição rejeita referências protegidas diretas ou de terceiros e reverte sem modificar o perfil', async () => {
+  const links = setupLinks();
+  const foreign = links.issue(url, 9, viewer);
+  for (const photo of [url, foreign]) {
+    const calls = [];
+    const client = {
+      async query(sql) {
+        calls.push(sql);
+        if (sql === 'SELECT foto_perfil FROM usuarios WHERE id=$1 FOR UPDATE') return { rows: [{ foto_perfil: url }] };
+        assert.ok(['BEGIN', 'ROLLBACK'].includes(sql), `Consulta inesperada: ${sql}`);
+      },
+      release() { calls.push('release'); }
+    };
+    const storage = createProfileStorage({ pool: { connect: async () => client }, media: profile, links });
+    await assert.rejects(storage.updateUser('UPDATE usuarios', ['Nome', 'email', photo, 8], viewer), { name: 'MediaInputError' });
+    assert.deepEqual(calls, ['BEGIN', 'SELECT foto_perfil FROM usuarios WHERE id=$1 FOR UPDATE', 'ROLLBACK', 'release']);
+  }
+});
+test('cadastro rejeita referência protegida fornecida pelo cliente antes de gravar no banco', async () => {
+  const storage = createProfileStorage({ pool: {}, media: profile, links: setupLinks() });
+  await assert.rejects(storage.createUser('INSERT INTO usuarios', [null, null, null, null, null, null, url]), { name: 'MediaInputError' });
+});
