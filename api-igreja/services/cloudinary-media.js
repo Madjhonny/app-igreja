@@ -13,14 +13,23 @@ class MediaStorageError extends Error {
   }
 }
 
+class MediaInputError extends TypeError {
+  constructor(message) {
+    super(message);
+    this.name = 'MediaInputError';
+  }
+}
+
+const newMuralPublicId = () => `agenda-adp-mural-${randomUUID().replace(/-/g, '')}`;
+
 function validateImage(dataUri, maxBytes) {
   const match = typeof dataUri === 'string' && DATA_URI_RE.exec(dataUri);
   if (!match || match[2].length > Math.ceil(maxBytes / 3) * 4) {
-    throw new TypeError('Imagem JPEG, PNG ou WebP inválida ou acima do limite.');
+    throw new MediaInputError('Imagem JPEG, PNG ou WebP inválida ou acima do limite.');
   }
   const bytes = Buffer.from(match[2], 'base64');
   if (bytes.length > maxBytes || bytes.toString('base64') !== match[2]) {
-    throw new TypeError('Imagem Base64 inválida ou acima do limite.');
+    throw new MediaInputError('Imagem Base64 inválida ou acima do limite.');
   }
   const type = match[1];
   const valid = type === 'jpeg'
@@ -28,7 +37,7 @@ function validateImage(dataUri, maxBytes) {
     : type === 'png'
       ? bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))
       : bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP';
-  if (!valid) throw new TypeError('O conteúdo não corresponde ao formato informado.');
+  if (!valid) throw new MediaInputError('O conteúdo não corresponde ao formato informado.');
 }
 
 function createCloudinaryMedia({ env = process.env, fetchImpl = globalThis.fetch, timeoutMs = 20000 } = {}) {
@@ -63,9 +72,9 @@ function createCloudinaryMedia({ env = process.env, fetchImpl = globalThis.fetch
     }
   }
 
-  async function uploadMuralImage(dataUri) {
+  async function uploadMuralImage(dataUri, publicId = newMuralPublicId()) {
     validateImage(dataUri, maxBytes);
-    const publicId = `agenda-adp-mural-${randomUUID().replace(/-/g, '')}`;
+    if (!PUBLIC_ID_RE.test(publicId || '')) throw new TypeError('Identificador de mídia inválido.');
     const data = await request('upload', {
       file: dataUri, asset_folder: ASSET_FOLDER, public_id: publicId,
       overwrite: 'false', allowed_formats: 'jpg,jpeg,png,webp',
@@ -90,7 +99,7 @@ function createCloudinaryMedia({ env = process.env, fetchImpl = globalThis.fetch
     return data.result;
   }
 
-  return { uploadMuralImage, deleteMuralImage };
+  return { uploadMuralImage, deleteMuralImage, validateMuralImage: dataUri => validateImage(dataUri, maxBytes) };
 }
 
-module.exports = { createCloudinaryMedia, MediaStorageError };
+module.exports = { createCloudinaryMedia, MediaStorageError, newMuralPublicId };
