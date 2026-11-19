@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
+import { fetchWithResilience } from './network';
 
 const DEFAULT_API_URL = 'https://app-igreja-eks0.onrender.com';
 
@@ -103,7 +104,7 @@ export async function apiFetch(pathOrUrl: string, init?: RequestInit): Promise<R
   const url = apiUrl(pathOrUrl);
   const authorization = new Headers(init?.headers).get('Authorization');
   const sentToken = authorization?.match(/^Bearer (\S+)$/i)?.[1];
-  const response = await fetch(url, init);
+  const response = await fetchWithResilience(url, init);
 
   if (url.startsWith(`${API_URL}/`) && sentToken) {
     let reason: string | undefined;
@@ -151,23 +152,16 @@ export async function refreshSession(): Promise<SessionUser | null> {
   if (pending?.token === token) return pending.promise;
 
   const promise = (async () => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
-    try {
-      const response = await apiFetch('/sessao', {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: controller.signal,
-      });
-      if (response.status === 401 || response.status === 403) return null;
-      if (!response.ok) throw new Error('Não foi possível conferir sua sessão. Tente novamente.');
-      const data = await response.json();
-      if (!data.usuario?.id) throw new Error('Resposta de sessão inválida.');
-      if (await getSessionToken() !== token) return null;
-      await storeSessionUser(data.usuario);
-      return data.usuario;
-    } finally {
-      clearTimeout(timeout);
-    }
+    const response = await apiFetch('/sessao', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (response.status === 401 || response.status === 403) return null;
+    if (!response.ok) throw new Error('Não foi possível conferir sua sessão. Tente novamente.');
+    const data = await response.json();
+    if (!data.usuario?.id) throw new Error('Resposta de sessão inválida.');
+    if (await getSessionToken() !== token) return null;
+    await storeSessionUser(data.usuario);
+    return data.usuario;
   })();
 
   pending = { token, promise };
