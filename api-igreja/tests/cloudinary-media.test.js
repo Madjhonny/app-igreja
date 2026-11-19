@@ -30,13 +30,21 @@ test('envia imagem na pasta restrita com identificador gerado pelo servidor e de
   assert.ok(calls[0].opts.signal instanceof AbortSignal);
 });
 
-test('rejeita URL externa, Base64 inválido, formato divergente e excesso de tamanho sem acessar provedor', async () => {
+test('rejeita URL externa, Base64 inválido, formato não permitido e excesso de tamanho sem acessar provedor', async () => {
   let calls = 0;
   const media = createCloudinaryMedia({ env: { ...env, MAX_IMAGE_BYTES: '100' }, fetchImpl: async () => { calls++; } });
-  for (const invalid of ['https://example.org/a.png', 'data:image/png;base64,abc', image.replace('image/png', 'image/jpeg'), 'data:image/png;base64,' + Buffer.alloc(200).toString('base64')]) {
+  for (const invalid of ['https://example.org/a.png', 'data:image/png;base64,abc', 'data:image/jpeg;base64,' + Buffer.from('not an image').toString('base64'), 'data:image/png;base64,' + Buffer.alloc(200).toString('base64')]) {
     await assert.rejects(media.uploadMuralImage(invalid), TypeError);
   }
   assert.equal(calls, 0);
+});
+
+test('normaliza PNG rotulado como JPEG por clientes legados sem aceitar formatos não permitidos', async () => {
+  const media = createCloudinaryMedia({ env, fetchImpl: async (_, opts) => {
+    assert.equal(opts.body.get('file'), image);
+    return Response.json(uploadResponse(opts.body.get('public_id')));
+  } });
+  await media.uploadMuralImage(image.replace('image/png', 'image/jpeg'));
 });
 
 test('rejeita resposta com URL externa ou ID diferente', async () => {
