@@ -103,4 +103,4 @@ function createCloudinaryMedia({ env = process.env, fetchImpl = globalThis.fetch
   return { uploadMuralImage, deleteMuralImage, validateMuralImage: dataUri => validateImage(dataUri, maxBytes) };
 }
 
-module.exports = { createCloudinaryMedia, MediaStorageError, newMuralPublicId };
+module.exports = { createCloudinaryMedia, MediaStorageError, MediaInputError, newMuralPublicId };
