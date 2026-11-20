@@ -2,10 +2,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { fetchWithResilience } from './network';
+import { createPublicCache } from './public-cache';
 
 const DEFAULT_API_URL = 'https://app-igreja-eks0.onrender.com';
 
 export const API_URL = (process.env.EXPO_PUBLIC_API_URL || DEFAULT_API_URL).replace(/\/$/, '');
+const publicCache = createPublicCache(API_URL, fetchWithResilience);
 
 export type SessionUser = {
   id: number;
@@ -65,6 +67,7 @@ export async function enterGuestMode() {
 }
 
 export async function saveSession(token: string, user: SessionUser, keepSignedIn: boolean) {
+  publicCache.clear();
   if (Platform.OS === 'web') await AsyncStorage.setItem(TOKEN_KEY, token);
   else {
     await SecureStore.setItemAsync(TOKEN_KEY, token);
@@ -86,6 +89,7 @@ export function apiUrl(pathOrUrl: string) {
 
 export async function clearSession(expectedToken?: string, reason?: string) {
   if (expectedToken && await getSessionToken() !== expectedToken) return;
+  publicCache.clear();
   if (Platform.OS !== 'web') await SecureStore.deleteItemAsync(TOKEN_KEY);
   await AsyncStorage.multiRemove([TOKEN_KEY, USER_KEY, KEEP_KEY, GUEST_KEY]);
   emit({ user: null, reason });
@@ -104,7 +108,7 @@ export async function apiFetch(pathOrUrl: string, init?: RequestInit): Promise<R
   const url = apiUrl(pathOrUrl);
   const authorization = new Headers(init?.headers).get('Authorization');
   const sentToken = authorization?.match(/^Bearer (\S+)$/i)?.[1];
-  const response = await fetchWithResilience(url, init);
+  const response = await publicCache.request(url, init);
 
   if (url.startsWith(`${API_URL}/`) && sentToken) {
     let reason: string | undefined;

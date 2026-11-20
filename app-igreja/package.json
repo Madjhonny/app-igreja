@@ -9,7 +9,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test:network": "node --experimental-strip-types --test tests/network.test.mjs"
+    "test:network": "node --experimental-strip-types --test tests/network.test.mjs tests/public-cache.test.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -48,6 +48,7 @@
     "babel-preset-expo": "~58.0.0",
     "eslint": "^9.25.0",
     "eslint-config-expo": "~58.0.4",
+    "playwright": "1.65.1",
     "typescript": "~6.0.3"
   },
   "private": true

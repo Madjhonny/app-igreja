@@ -81,3 +81,9 @@ jobs:
 
       - name: Verify PWA export
         run: node tests/check-pwa-export.mjs "$RUNNER_TEMP/agenda-adp-web"
+
+      - name: Install browser for web resilience test
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser resilience test
+        run: node tests/check-web-resilience.mjs "$RUNNER_TEMP/agenda-adp-web"

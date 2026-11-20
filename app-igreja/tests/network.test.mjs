@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ApiTimeoutError, fetchWithResilience } from '../services/network.ts';
+import { ApiTimeoutError, fetchWithResilience, getConnectionStatus, subscribeConnection } from '../services/network.ts';
 
 const url = 'https://api.example.test/eventos';
 const ok = () => new Response('[]', { status: 200 });
@@ -139,4 +139,16 @@ test('HEAD é leitura e mantém o limite de uma nova tentativa', async () => {
     throw new TypeError('network');
   })), TypeError);
   assert.equal(calls, 2);
+});
+
+test('aviso de conexão aparece após falha e desaparece após recuperação', async () => {
+  await fetchWithResilience(url, undefined, policy(async () => ok()));
+  const states = [];
+  const unsubscribe = subscribeConnection(status => states.push(status));
+  await assert.rejects(fetchWithResilience(url, undefined, policy(async () => { throw new TypeError('network'); })));
+  assert.equal(getConnectionStatus(), 'unavailable');
+  await fetchWithResilience(url, undefined, policy(async () => new Response('', { status: 401 })));
+  assert.equal(getConnectionStatus(), 'ok');
+  assert.deepEqual(states, ['unavailable', 'ok']);
+  unsubscribe();
 });
