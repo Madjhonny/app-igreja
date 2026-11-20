@@ -1,0 +1,26 @@
+{
+  "id": "/",
+  "name": "Agenda ADP",
+  "short_name": "Agenda ADP",
+  "description": "Agenda, eventos e mural das congregações.",
+  "lang": "pt-BR",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#2A4B4C",
+  "background_color": "#F7F5EC",
+  "icons": [
+    {
+      "src": "/pwa/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/pwa/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
