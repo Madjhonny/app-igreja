@@ -67,6 +67,9 @@ jobs:
       - name: Network resilience tests
         run: npm run test:network
 
+      - name: PWA tests
+        run: node --test tests/pwa.test.mjs
+
       - name: Lint
         run: npm run lint
 
@@ -75,3 +78,6 @@ jobs:
 
       - name: Export web build
         run: npx expo export --platform web --output-dir "$RUNNER_TEMP/agenda-adp-web"
+
+      - name: Verify PWA export
+        run: node tests/check-pwa-export.mjs "$RUNNER_TEMP/agenda-adp-web"
