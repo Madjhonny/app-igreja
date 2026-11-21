@@ -21,6 +21,15 @@ try {
   browser = await chromium.launch();
   const page = await browser.newPage({ serviceWorkers: 'block', viewport: { width: 390, height: 844 } });
   let calls = 0, unavailable = true;
+  const reports = [];
+  await page.route('http://localhost:3000/telemetria', async route => {
+    const request = route.request();
+    if (request.method() === 'POST') {
+      assert.equal(request.headers().authorization, undefined);
+      reports.push(request.postDataJSON());
+    }
+    await route.fulfill({ status: 204, headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'content-type' } });
+  });
   await page.route('http://localhost:3000/congregacoes', async route => {
     calls++;
     await route.fulfill({ status: unavailable ? 503 : 200, contentType: 'application/json',
@@ -32,11 +41,14 @@ try {
   await banner.waitFor({ timeout: 20_000 });
   assert.equal(calls, 2, 'deve repetir somente uma vez');
   unavailable = false;
+  const diagnostic = page.waitForResponse(response => response.url().endsWith('/telemetria') && response.request().method() === 'POST');
   await page.getByText('Toque para tentar novamente.', { exact: false }).click();
   await banner.waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: 'Selecionar congregação' }).click();
   await page.getByText('Sede Teste', { exact: true }).waitFor();
   assert.equal(calls, 3);
+  await diagnostic;
+  assert.deepEqual(reports, [{ platform: 'web', events: [{ category: 'server', count: 1 }] }]);
   console.log('OK: falha 503, retry, aviso de conexão, recuperação e seleção de congregação.');
 } finally {
   await browser?.close();

@@ -1,13 +1,24 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
-import { fetchWithResilience } from './network';
+import { ApiTimeoutError, fetchWithResilience } from './network';
+import { createClientMonitor } from './client-monitoring';
 import { createPublicCache } from './public-cache';
 
 const DEFAULT_API_URL = 'https://app-igreja-eks0.onrender.com';
 
 export const API_URL = (process.env.EXPO_PUBLIC_API_URL || DEFAULT_API_URL).replace(/\/$/, '');
 const publicCache = createPublicCache(API_URL, fetchWithResilience);
+export const clientMonitor = createClientMonitor(Platform.OS, async report => {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    await fetch(`${API_URL}/telemetria`, {
+      method: 'POST', credentials: 'omit', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(report), signal: controller.signal,
+    });
+  } finally { clearTimeout(timer); }
+});
 
 export type SessionUser = {
   id: number;
@@ -108,7 +119,21 @@ export async function apiFetch(pathOrUrl: string, init?: RequestInit): Promise<R
   const url = apiUrl(pathOrUrl);
   const authorization = new Headers(init?.headers).get('Authorization');
   const sentToken = authorization?.match(/^Bearer (\S+)$/i)?.[1];
-  const response = await publicCache.request(url, init);
+  const firstParty = url.startsWith(`${API_URL}/`);
+  let response: Response;
+  try {
+    response = await publicCache.request(url, init);
+  } catch (error) {
+    if (firstParty && !init?.signal?.aborted) {
+      if (error instanceof ApiTimeoutError) clientMonitor.record('timeout');
+      else if (error instanceof TypeError) clientMonitor.record('network');
+    }
+    throw error;
+  }
+  if (firstParty) {
+    if (response.status >= 500) clientMonitor.record('server');
+    else if (response.ok) void clientMonitor.flush();
+  }
 
   if (url.startsWith(`${API_URL}/`) && sentToken) {
     let reason: string | undefined;

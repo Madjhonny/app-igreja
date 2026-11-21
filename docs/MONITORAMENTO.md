@@ -16,6 +16,12 @@ No Render, procure por `http_request` nos logs do serviço. Filtre por `slow`, `
 
 Após homologação e publicação, pode-se configurar `/health` como Health Check Path no Render e testar disponibilidade por um monitor externo. Não alterar o health check do serviço de produção antes da publicação desta rota.
 
+## Aplicativo
+
+`POST /telemetria` recebe apenas plataforma (`web`, `android`, `ios`, `other`) e contadores de falhas finais de rede, timeout, respostas 5xx e erros de renderização capturados pelo ErrorBoundary da raiz. Os registros `client_diagnostic` não contêm identificadores, mensagens, stack traces, credenciais ou URLs. A conexão HTTP utiliza endereço IP para transporte e limitação de abuso, sem incluí-lo nos registros de diagnóstico.
+
+Os contadores ficam em memória, limitados a 100 por categoria. O envio ocorre após uma resposta bem-sucedida da API ou ao capturar um erro de renderização, no máximo uma vez por minuto, com timeout de cinco segundos e sem bloquear o usuário. O endpoint não exige login, limita o corpo a 1 KB e aceita até 60 requisições por IP a cada 15 minutos. Dados extras e categorias desconhecidas são rejeitados.
+
 ## Limites
 
-Esta etapa monitora a API; não captura falhas nativas ou indisponibilidade total do servidor. A coleta de erros no cliente e alertas externos deve ser implementada separadamente, com política de privacidade e coleta minimizada. Nenhum serviço pago ou SDK novo é necessário para esta etapa.
+O diagnóstico é de melhor esforço: pode perder eventos se o app fechar ou o envio falhar. Não captura falhas fatais nativas, todos os erros JavaScript ou indisponibilidade total permanente do servidor. Contadores não autenticados não devem ser considerados prova de incidentes. Alertas externos são uma etapa separada. Nenhum serviço pago ou SDK novo é necessário.

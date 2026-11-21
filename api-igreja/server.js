@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('node:crypto');
 const { rateLimit } = require('express-rate-limit');
-const { requestMonitoring, healthHandler } = require('./services/monitoring');
+const { requestMonitoring, healthHandler, clientTelemetryHandler } = require('./services/monitoring');
 require('dotenv').config();
 
 
@@ -31,6 +31,8 @@ app.use(cors({
     return callback(new Error('Origem não permitida pelo CORS.'));
   },
 }));
+app.post('/telemetria', rateLimit({ windowMs: 15 * 60 * 1000, limit: 60,
+  standardHeaders: 'draft-8', legacyHeaders: false }), express.json({ limit: '1kb' }), clientTelemetryHandler());
 app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '4mb' }));
 
 const loginLimiter = rateLimit({

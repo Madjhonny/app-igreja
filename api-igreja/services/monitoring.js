@@ -56,4 +56,26 @@ function healthHandler(pool, { timeoutMs = 2000, cacheMs = 5000, now = Date.now 
   };
 }
 
-module.exports = { requestMonitoring, healthHandler };
+function clientTelemetryHandler({ logger = console } = {}) {
+  const categories = new Set(['network', 'timeout', 'server', 'render']);
+  const platforms = new Set(['web', 'android', 'ios', 'other']);
+  const exactKeys = (value, keys) => value && typeof value === 'object' && !Array.isArray(value) &&
+    Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+  return (req, res) => {
+    const body = req.body;
+    if (!exactKeys(body, ['platform', 'events']) || !platforms.has(body.platform) ||
+        !Array.isArray(body.events) || body.events.length < 1 || body.events.length > categories.size ||
+        !body.events.every(event => exactKeys(event, ['category', 'count']) && categories.has(event.category) &&
+          Number.isInteger(event.count) && event.count >= 1 && event.count <= 100) ||
+        new Set(body.events.map(event => event.category)).size !== body.events.length) {
+      return res.status(400).json({ erro: 'Diagnóstico inválido.' });
+    }
+    try {
+      logger.warn(JSON.stringify({ event: 'client_diagnostic', platform: body.platform,
+        events: body.events.map(({ category, count }) => ({ category, count })) }));
+    } catch { /* Never interrupt the client. */ }
+    return res.status(204).end();
+  };
+}
+
+module.exports = { requestMonitoring, healthHandler, clientTelemetryHandler };
