@@ -31,6 +31,7 @@ import {
 import type { GestureResponderEvent } from 'react-native';
 import { router, useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { monthMarks, createLatestMonthRequest, monthEvents } from '@/services/agenda-month';
 
 const cores = {
   verde: '#2A4B4C',
@@ -47,10 +48,10 @@ const ALTURA_LINHA = 42;
 const LINHAS_DA_GRADE = 6;
 const TAMANHO_MARCA = 36;
 const DESLOCAMENTOS_MESES = [-2, -1, 0, 1, 2] as const;
+const EVENTOS_VAZIOS: any[] = [];
 
 type DiaDoMes = {
   dia: number;
-  dataFormatada: string;
 };
 
 type CongregacaoFiltro = {
@@ -71,13 +72,7 @@ const gerarDiasDoMes = (
   }
 
   for (let i = 1; i <= totalDias; i++) {
-    const mesStr = String(mes + 1).padStart(2, '0');
-    const diaStr = String(i).padStart(2, '0');
-
-    dias.push({
-      dia: i,
-      dataFormatada: `${ano}-${mesStr}-${diaStr}`,
-    });
+    dias.push({ dia: i });
   }
 
   return dias;
@@ -90,15 +85,6 @@ type PaginaMesProps = {
   largura: number;
   esquerda: number;
   alturaLinha: number;
-};
-
-const eventoIncluiData = (ev: any, data: string) => {
-  const inicio = ev.data_inicio.split('T')[0];
-  const fim = ev.data_fim
-    ? ev.data_fim.split('T')[0]
-    : inicio;
-
-  return data >= inicio && data <= fim;
 };
 
 const PaginaMes = React.memo(function PaginaMes({
@@ -126,23 +112,9 @@ const PaginaMes = React.memo(function PaginaMes({
     linhas.push(dias.slice(r * 7, r * 7 + 7));
   }
 
-  const marcado = (item: DiaDoMes | null) =>
-    !!item &&
-    eventos.some(ev =>
-      eventoIncluiData(ev, item.dataFormatada)
-    );
-
-  const conectados = (
-    a: DiaDoMes | null,
-    b: DiaDoMes | null
-  ) =>
-    !!a &&
-    !!b &&
-    eventos.some(
-      ev =>
-        eventoIncluiData(ev, a.dataFormatada) &&
-        eventoIncluiData(ev, b.dataFormatada)
-    );
+  const { marked, connected } = useMemo(() => monthMarks(ano, mes, eventos), [ano, mes, eventos]);
+  const marcado = (item: DiaDoMes | null) => !!item && marked[item.dia];
+  const conectados = (a: DiaDoMes | null, b: DiaDoMes | null) => !!a && !!b && connected[b.dia];
 
   return (
     <View
@@ -240,15 +212,15 @@ export default function TelaAgenda() {
   const webDuasColunas = Platform.OS === 'web' && larguraTela >= 980;
   const alturaLinhaCalendario = webDuasColunas ? 54 : ALTURA_LINHA;
 
-  const [mesAtual, setMesAtual] = useState(
-    new Date().getMonth()
-  );
-
-  const [anoAtual, setAnoAtual] = useState(
-    new Date().getFullYear()
-  );
-
-  const [eventosDoMes, setEventosDoMes] = useState<any[]>([]);
+  const [indiceAtual, setIndiceAtual] = useState(() => {
+    const agora = new Date();
+    return agora.getFullYear() * 12 + agora.getMonth();
+  });
+  const mesAtual = indiceAtual % 12;
+  const anoAtual = Math.floor(indiceAtual / 12);
+  const [resultadoMes, setResultadoMes] = useState<{ month: number; events: any[] } | null>(null);
+  const eventosDoMes = monthEvents(resultadoMes, indiceAtual, EVENTOS_VAZIOS);
+  const [mesDaConsulta, setMesDaConsulta] = useState<number | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [erroCarregamento, setErroCarregamento] = useState('');
 
@@ -295,7 +267,7 @@ export default function TelaAgenda() {
         )?.congregacao ||
         'Congregação selecionada';
 
-  const ultimaBuscaRef = useRef(0);
+  const [consultasAgenda] = useState(createLatestMonthRequest);
   const ultimaBuscaCongregacoesRef = useRef(0);
 
   const buscarCongregacoes = useCallback(async () => {
@@ -415,22 +387,24 @@ export default function TelaAgenda() {
 
   const buscarEventosDoMes = useCallback(
     async (mes: number, ano: number) => {
-      const idBusca = ++ultimaBuscaRef.current;
-
+      const consulta = consultasAgenda.start();
+      const month = ano * 12 + mes - 1;
+      setMesDaConsulta(month);
       setCarregando(true);
       setErroCarregamento('');
 
       try {
         // Identifica se o acesso é de convidado.
         const convidado = await isGuestMode();
+        if (!consulta.isCurrent()) return;
 
         const rota = `/eventos?mes=${mes}&ano=${ano}`;
 
         // Convidado: consulta pública.
         // Usuário autenticado: consulta com token.
         const resposta = convidado
-          ? await apiFetch(`/publico${rota}`)
-          : await authenticatedFetch(rota);
+          ? await apiFetch(`/publico${rota}`, { signal: consulta.signal })
+          : await authenticatedFetch(rota, { signal: consulta.signal });
 
         if (resposta.ok) {
           const dados = await resposta.json();
@@ -444,25 +418,25 @@ export default function TelaAgenda() {
           }
 
           if (
-            idBusca === ultimaBuscaRef.current
+            consulta.isCurrent()
           ) {
-            setEventosDoMes(dados);
+            setResultadoMes({ month, events: dados });
           }
         } else if (
-          idBusca === ultimaBuscaRef.current
+          consulta.isCurrent()
         ) {
           const dados = await resposta
             .json()
             .catch(() => ({}));
 
-          setErroCarregamento(
+          if (consulta.isCurrent()) setErroCarregamento(
             dados.erro ||
               'Não foi possível carregar a agenda.'
           );
         }
       } catch {
         if (
-          idBusca === ultimaBuscaRef.current
+          consulta.isCurrent()
         ) {
           setErroCarregamento(
             'Falha de conexão. Verifique sua internet e tente novamente.'
@@ -470,26 +444,32 @@ export default function TelaAgenda() {
         }
       } finally {
         if (
-          idBusca === ultimaBuscaRef.current
+          consulta.isCurrent()
         ) {
           setCarregando(false);
         }
       }
     },
-    []
+    [consultasAgenda]
   );
 
   useFocusEffect(
     useCallback(() => {
       void carregarUsuario();
+    }, [carregarUsuario])
+  );
+
+  useFocusEffect(
+    useCallback(() => {
       void buscarEventosDoMes(
         mesAtual + 1,
         anoAtual
       );
+      return () => consultasAgenda.cancel();
     }, [
       anoAtual,
       buscarEventosDoMes,
-      carregarUsuario,
+      consultasAgenda,
       mesAtual,
     ])
   );
@@ -500,21 +480,9 @@ export default function TelaAgenda() {
 
   const mudarMes = useCallback(
     (direcao: number) => {
-      let novoMes = mesAtual + direcao;
-      let novoAno = anoAtual;
-
-      if (novoMes > 11) {
-        novoMes = 0;
-        novoAno += 1;
-      } else if (novoMes < 0) {
-        novoMes = 11;
-        novoAno -= 1;
-      }
-
-      setMesAtual(novoMes);
-      setAnoAtual(novoAno);
+      setIndiceAtual(atual => atual + direcao);
     },
-    [anoAtual, mesAtual]
+    []
   );
 
   const [
@@ -537,7 +505,6 @@ export default function TelaAgenda() {
     () => new Animated.Value(0)
   );
 
-  const indiceAtual = anoAtual * 12 + mesAtual;
   const [indiceAncora] = useState(indiceAtual);
 
   const posInicioRef = useRef(0);
@@ -807,12 +774,14 @@ export default function TelaAgenda() {
       );
 
       if (resposta.ok) {
-        setEventosDoMes(atuais =>
-          atuais.filter(
+        consultasAgenda.cancel();
+        setCarregando(false);
+        setResultadoMes(atual => atual ? { ...atual, events: atual.events.filter(
             ev =>
               Number(ev.id) !== Number(eventoId)
-          )
+          ) } : null
         );
+        if (carregando) void buscarEventosDoMes(mesAtual + 1, anoAtual);
 
         setModalDetalhesVisivel(false);
         setConfirmandoExclusao(false);
@@ -1197,7 +1166,7 @@ export default function TelaAgenda() {
               Atividades do Mês
             </Text>
 
-            {carregando ? (
+            {carregando || mesDaConsulta !== indiceAtual ? (
               <ActivityIndicator
                 size="small"
                 color={cores.verde}

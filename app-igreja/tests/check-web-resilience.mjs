@@ -73,6 +73,35 @@ try {
   const uri = await preview.getAttribute('src');
   assert.ok(Buffer.from(uri.split(',')[1], 'base64').length <= 1_500_000);
   console.log('OK: seleção de imagem real, redimensionamento proporcional e limite de upload.');
+
+  // Navegação rápida: o mês intermediário responde somente depois do último.
+  let agendaCalls = 0, releaseMonth, finishMonth;
+  const delayedMonth = new Promise(resolve => { releaseMonth = resolve; });
+  const monthFinished = new Promise(resolve => { finishMonth = resolve; });
+  await page.route('http://localhost:3000/eventos?*', async route => {
+    const call = ++agendaCalls;
+    const url = new URL(route.request().url());
+    const date = `${url.searchParams.get('ano')}-${url.searchParams.get('mes').padStart(2, '0')}-10`;
+    if (call === 2) await delayedMonth;
+    await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization' },
+      body: JSON.stringify([{ id: call, titulo: `Evento teste ${call}`, data_inicio: date, data_fim: date, horario: '10:00:00', congregacao_id: 1, congregacao: 'Sede Teste' }]) }).catch(error => { if (call !== 2) throw error; });
+    if (call === 2) finishMonth();
+  });
+  await page.goto(`http://127.0.0.1:${server.address().port}/agenda`);
+  await page.getByText('Evento teste 1', { exact: true }).waitFor();
+  const nextMonth = page.getByLabel('Próximo mês', { exact: true });
+  const secondRequest = page.waitForRequest(request => request.url().includes('/eventos?') && request.method() === 'GET');
+  await nextMonth.click();
+  await secondRequest;
+  await page.getByText('Evento teste 1', { exact: true }).waitFor({ state: 'hidden' });
+  await nextMonth.click();
+  await page.getByText('Evento teste 3', { exact: true }).waitFor();
+  releaseMonth();
+  await monthFinished;
+  await page.getByText('Evento teste 3', { exact: true }).waitFor();
+  assert.equal(await page.getByText('Evento teste 2', { exact: true }).count(), 0);
+  assert.equal(agendaCalls, 3);
+  console.log('OK: navegação rápida da agenda sem dados de mês anterior.');
 } finally {
   await browser?.close();
   server.close();
