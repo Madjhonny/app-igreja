@@ -9,7 +9,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
-    "test:network": "node --experimental-strip-types --test tests/network.test.mjs tests/public-cache.test.mjs tests/client-monitoring.test.mjs"
+    "test:network": "node --experimental-strip-types --test tests/network.test.mjs tests/public-cache.test.mjs tests/client-monitoring.test.mjs tests/mural-image.test.mjs"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -23,6 +23,7 @@
     "expo-font": "~58.0.11",
     "expo-haptics": "~58.0.8",
     "expo-image": "~58.0.18",
+    "expo-image-manipulator": "~58.0.16",
     "expo-image-picker": "~58.0.10",
     "expo-linking": "~58.0.17",
     "expo-router": "~58.0.31",
