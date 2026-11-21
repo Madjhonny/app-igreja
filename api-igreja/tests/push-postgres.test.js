@@ -110,10 +110,11 @@ test('HTTP + PostgreSQL real: login, escopo, concorrência e revogação de sess
         if (match) { clearTimeout(timer); resolve(Number(match[1])); }
       });
     });
-    const request = async (route, { method = 'GET', token, body, origin, timeoutMs = 5000 } = {}) => {
+    const request = async (route, { method = 'GET', token, body, origin, forwardedFor, timeoutMs = 5000 } = {}) => {
       const response = await fetch(`http://127.0.0.1:${port}${route}`, {
         method, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          ...(body ? { 'Content-Type': 'application/json' } : {}), ...(origin ? { Origin: origin } : {}) },
+          ...(body ? { 'Content-Type': 'application/json' } : {}), ...(origin ? { Origin: origin } : {}),
+          ...(forwardedFor ? { 'X-Forwarded-For': forwardedFor } : {}) },
         body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(timeoutMs),
       });
       return { status: response.status, data: await response.json(), cors: response.headers.get('access-control-allow-origin') };
@@ -449,9 +450,10 @@ test('HTTP + PostgreSQL real: login, escopo, concorrência e revogação de sess
       }
       loadTest.diagnostic(JSON.stringify({ total_requests: 800, concurrent_users: 50, errors: errors.length, requests_per_second: Math.round(800000 / elapsed) }));
       assert.deepEqual(errors, []);
-      const authTimes = await Promise.all(users.slice(0, 8).map(async user => {
+      const authTimes = await Promise.all(users.slice(0, 8).map(async (user, index) => {
         const before = performance.now();
-        const result = await request('/login', { method: 'POST', body: { email: user.email, senha }, timeoutMs: 15000 });
+        // IPs TEST-NET exclusivos simulam usuários independentes atrás do proxy confiável.
+        const result = await request('/login', { method: 'POST', body: { email: user.email, senha }, forwardedFor: `192.0.2.${index + 1}`, timeoutMs: 15000 });
         assert.equal(result.status, 200);
         assert.ok(result.data.token);
         return performance.now() - before;
@@ -459,6 +461,9 @@ test('HTTP + PostgreSQL real: login, escopo, concorrência e revogação de sess
       const authMetrics = summarize(authTimes);
       loadTest.diagnostic(JSON.stringify({ route: '/login', concurrent_users: 8, bcrypt_cost: 12, ...authMetrics }));
       assert.ok(authMetrics.p95_ms <= 10000, `Login: p95 acima de 10 segundos (${authMetrics.p95_ms}ms)`);
+      const failedLogin = () => request('/login', { method: 'POST', body: { email: 'notregistered@example.test', senha }, forwardedFor: '192.0.2.100' });
+      for (let i = 0; i < 10; i++) assert.equal((await failedLogin()).status, 400);
+      assert.equal((await failedLogin()).status, 429);
     });
   } finally {
     if (child && child.exitCode === null && child.signalCode === null) {

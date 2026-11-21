@@ -6,7 +6,7 @@ Executado automaticamente no job API da CI, em PostgreSQL descartável e API HTT
 
 - 800 contas fictícias, 1.000 eventos, 100 publicações e 2.000 curtidas.
 - 50 usuários virtuais, 4 rodadas de 4 consultas por usuário (800 requisições), com autenticação individual nas rotas privadas.
-- 8 logins simultâneos com o custo bcrypt 12 utilizado na recuperação e alteração de senha.
+- 8 logins simultâneos com o custo bcrypt 12 utilizado na recuperação e alteração de senha, usando IPs TEST-NET distintos atrás do proxy de teste. O limite de 10 falhas por IP é verificado separadamente, sem desativá-lo.
 - Aquecimento fora das métricas. Tempo medido inclui HTTP local, processamento da API, consultas PostgreSQL e leitura do JSON.
 
 | Rota | Requisições | Limite p95 |
