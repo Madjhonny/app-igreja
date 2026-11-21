@@ -26,3 +26,7 @@ Usar contas e eventos de teste na homologação. Instalar sobre o aplicativo ant
 - Ativar envio em produção de forma controlada, se homologado; manter opção de desativar a flag no backend, sem remover os dados da migração.
 
 Nenhuma etapa de produção é automática por este documento. O APK preview não é uma build de produção.
+
+## Ajuste 1.3.1
+
+No Android, ao entrar na agenda pela primeira vez com conta aprovada, o aplicativo oferece ativar notificações. O aceite abre a permissão nativa quando ainda não concedida; a recusa é lembrada por conta e ambiente. O Perfil continua permitindo ativar ou desativar, sem novo convite após uma escolha. Convidados, contas pendentes e web não recebem o convite. Validar também a atualização sobre o APK 1.3.0, a recusa e o retorno ao aplicativo.
