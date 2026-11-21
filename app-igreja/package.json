@@ -9,6 +9,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "lint": "expo lint",
+    "eas-build-pre-install": "node scripts/check-release-config.cjs",
     "test:network": "node --experimental-strip-types --test tests/network.test.mjs tests/public-cache.test.mjs tests/client-monitoring.test.mjs tests/mural-image.test.mjs tests/agenda-month.test.mjs tests/push-preference.test.mjs"
   },
   "dependencies": {

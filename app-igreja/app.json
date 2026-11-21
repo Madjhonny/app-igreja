@@ -39,6 +39,7 @@
       ],
       "@react-native-community/datetimepicker",
       "expo-image",
+      ["expo-image-picker", { "photosPermission": "O Agenda ADP usa suas fotos para selecionar uma imagem de perfil ou publicação.", "cameraPermission": false, "microphonePermission": false }],
       "expo-secure-store",
       "expo-web-browser",
       "expo-status-bar",
