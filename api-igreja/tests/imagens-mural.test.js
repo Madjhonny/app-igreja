@@ -53,6 +53,7 @@ function setup({ imagemExiste = true, role = 'MEMBRO', storage = null } = {}) {
     throw new Error('Consulta inesperada: ' + sql);
   } };
   const mocks = {
+    './services/monitoring': require('../services/monitoring'),
     express, cors: () => () => {}, pg: { Pool: function () { return pool; } },
     bcryptjs: { compare: async () => true, hash: async () => '', genSalt: async () => '' },
     dotenv: { config() {} }, 'node:crypto': crypto,

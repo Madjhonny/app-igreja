@@ -86,6 +86,7 @@ function prepararAmbiente() {
   };
 
   const mocks = {
+    './services/monitoring': require('../services/monitoring'),
     express,
     cors: () => () => {},
     pg: {

@@ -68,6 +68,7 @@ function setup({ emailExiste = true, status = 'APROVADO', provedor = true } = {}
   const client = { query, release() {} };
   const pool = { query, async connect() { return client; } };
   const mocks = {
+    './services/monitoring': require('../services/monitoring'),
     express, cors: () => () => {}, pg: { Pool: function() { return pool; } },
     bcryptjs: { async compare(s, hash) { return hash === 'hashed:' + s; },
       async hash(s) { return 'hashed:' + s; }, async genSalt() { return ''; } },
