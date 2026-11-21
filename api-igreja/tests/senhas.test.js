@@ -54,6 +54,7 @@ function setup({ emailExiste = true, status = 'APROVADO', provedor = true } = {}
       return { rows: [], rowCount: 1 };
     }
     if (sql.includes('SELECT senha_hash FROM usuarios WHERE id')) return { rows: [{ senha_hash: user.senha_hash }], rowCount: 1 };
+    if (sql.includes('SELECT usuario_id FROM senha_recuperacoes')) return { rows: recuperacao ? [{ usuario_id: user.id }] : [], rowCount: recuperacao ? 1 : 0 };
     if (sql.includes('UPDATE usuarios SET senha_hash')) {
       if (sql.includes('AND senha_hash = $3') && user.senha_hash !== params[2]) return { rows: [], rowCount: 0 };
       user.senha_hash = params[0];

@@ -5,7 +5,10 @@ import {
   canManage,
   getStoredUser,
   isGuestMode,
+  API_URL,
+  getSessionToken,
 } from '@/services/session';
+import { pushAvailable, pushPreference } from '@/services/push-native';
 import { useSessionUser } from '@/hooks/use-session-user';
 
 import React, { useCallback, useState } from 'react';
@@ -40,6 +43,32 @@ export default function TelaPerfil() {
   const [convidado, setConvidado] = useState(false);
   const [carregandoPerfil, setCarregandoPerfil] = useState(true);
   const [navegando, setNavegando] = useState(false);
+  const [pushStatus, setPushStatus] = useState<'active' | 'pending' | 'off'>('off');
+  const [pushBusy, setPushBusy] = useState(false);
+  const pushUserId = usuario?.id;
+
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    if (pushAvailable && pushUserId) void pushPreference.status(pushUserId).then(status => {
+      if (active) setPushStatus(status);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [pushUserId]));
+
+  const alterarNotificacoes = async () => {
+    if (pushBusy || !usuario || usuario.status_conta !== 'APROVADO') return;
+    setPushBusy(true);
+    try {
+      const token = await getSessionToken();
+      const ok = pushStatus === 'off'
+        ? !!token && await pushPreference.enable(API_URL, usuario.id, token)
+        : await pushPreference.disable(API_URL);
+      setPushStatus(await pushPreference.status(usuario.id));
+      if (!ok) mostrarDialogo('Notificações', 'Não foi possível concluir. Confira as permissões do aparelho e a conexão e tente novamente.');
+    } catch {
+      mostrarDialogo('Notificações', 'Não foi possível concluir. Tente novamente.');
+    } finally { setPushBusy(false); }
+  };
 
   // ==========================================
   // CARREGAR PERFIL OU MODO CONVIDADO
@@ -386,6 +415,18 @@ export default function TelaPerfil() {
             color="#999"
           />
         </TouchableOpacity>
+
+        {pushAvailable && usuario?.status_conta === 'APROVADO' && (
+          <TouchableOpacity style={styles.menuCard} onPress={alterarNotificacoes} disabled={pushBusy}
+            accessibilityRole="button" accessibilityLabel={pushStatus === 'off' ? 'Ativar notificações' : 'Desativar notificações'}>
+            <View style={styles.menuIconContainer}><Ionicons name="notifications-outline" size={24} color={cores.verde} /></View>
+            <View style={styles.menuTextContainer}>
+              <Text style={styles.menuTitle}>Notificações da agenda</Text>
+              <Text style={styles.menuSubtitle}>{pushStatus === 'active' ? 'Ativas — toque para desativar' : pushStatus === 'pending' ? 'Desativação pendente — toque para tentar novamente' : 'Receba avisos de novos eventos da sua congregação'}</Text>
+            </View>
+            {pushBusy ? <ActivityIndicator color={cores.verde} /> : <Ionicons name="chevron-forward" size={20} color="#999" />}
+          </TouchableOpacity>
+        )}
 
         {/* DADOS E SEGURANÇA */}
 

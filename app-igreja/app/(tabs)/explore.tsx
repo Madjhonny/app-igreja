@@ -672,7 +672,7 @@ export default function TelaEventos() {
                   value={textoComentario}
                   onChangeText={setTextoComentario}
                 />
-                <TouchableOpacity style={styles.enviarComentarioBtn} onPress={enviarComentario}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Enviar comentário" style={styles.enviarComentarioBtn} onPress={enviarComentario}>
                   <Ionicons name="send" size={18} color="#fff" />
                 </TouchableOpacity>
               </View>}
@@ -835,7 +835,7 @@ export default function TelaEventos() {
                 value={textoComentario}
                 onChangeText={setTextoComentario}
               />
-              <TouchableOpacity style={styles.enviarComentarioBtn} onPress={enviarComentario}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Enviar comentário" style={styles.enviarComentarioBtn} onPress={enviarComentario}>
                 <Ionicons name="send" size={18} color="#fff" />
               </TouchableOpacity>
             </View>}

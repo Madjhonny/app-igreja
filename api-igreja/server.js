@@ -207,7 +207,20 @@ const pool = new Pool({
     : undefined,
 });
 
+// Desativado por padrão. Não acessa tabelas novas até migração e credenciais.
+const push = process.env.PUSH_NOTIFICATIONS_ENABLED === 'true' && process.env.EXPO_PUSH_ACCESS_TOKEN && !/\s/.test(process.env.EXPO_PUSH_ACCESS_TOKEN)
+  ? require('./services/push-notifications').createPushNotifications({ pool, accessToken: process.env.EXPO_PUSH_ACCESS_TOKEN }) : null;
+if (push) app.use((_req, _res, next) => { push.kick(); next(); });
 app.get('/health', healthHandler(pool));
+
+async function enqueuePush(client, ids) {
+  if (!push) return;
+  // Uma falha na fila não deve impedir a publicação de um evento válido.
+  await client.query('SAVEPOINT push_enqueue');
+  try { await push.enqueue(client, ids); }
+  catch { await client.query('ROLLBACK TO SAVEPOINT push_enqueue'); console.warn('push_enqueue_failed'); }
+  await client.query('RELEASE SAVEPOINT push_enqueue');
+}
 
 // Ativação explícita após migração e homologação. Sem a flag, o mural legado
 // permanece inalterado, inclusive para clientes que enviam Base64.
@@ -411,6 +424,23 @@ const somenteMaster = (req, res, next) => {
   return verificarAprovacao(req, res, next);
 };
 
+const pushLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false });
+app.post('/notificacoes/dispositivo', pushLimiter, verificarToken, verificarAprovacao, async (req, res) => {
+  if (!push) return res.status(503).json({ erro: 'Notificações temporariamente indisponíveis.' });
+  try {
+    if (!await push.register(req.usuario, req.body)) return res.status(400).json({ erro: 'Registro inválido.' });
+    return res.status(204).end();
+  } catch { return res.status(503).json({ erro: 'Não foi possível ativar as notificações.' }); }
+});
+// A chave aleatória permite revogar o dispositivo mesmo quando a sessão expirou.
+app.post('/notificacoes/desativar', pushLimiter, async (req, res) => {
+  if (!push) return res.status(503).json({ erro: 'Notificações temporariamente indisponíveis.' });
+  try {
+    if (!await push.revoke(req.body)) return res.status(400).json({ erro: 'Registro inválido.' });
+    return res.status(204).end();
+  } catch { return res.status(503).json({ erro: 'Não foi possível desativar as notificações.' }); }
+});
+
 // Dados atuais da sessão, sem senha/hash ou dados de outros usuários.
 app.get('/sessao', verificarToken, async (req, res) => {
   try {
@@ -533,25 +563,35 @@ app.post('/senha/alterar', verificarToken, alterarSenhaLimiter, async (req, res)
   }
   if (senha_atual === nova_senha) return res.status(400).json({ erro: 'A nova senha deve ser diferente da atual.' });
 
+  let client;
   try {
     const resultado = await pool.query('SELECT senha_hash FROM usuarios WHERE id = $1', [req.usuario.id]);
     if (!resultado.rowCount || !await bcrypt.compare(senha_atual, resultado.rows[0].senha_hash)) {
       return res.status(403).json({ erro: 'A senha atual está incorreta.' });
     }
     const novoHash = await bcrypt.hash(nova_senha, 12);
+    client = await pool.connect();
+    await client.query('BEGIN');
+    // Mesma ordem de locks da redefinição: recuperação antes do usuário.
+    await client.query('SELECT usuario_id FROM senha_recuperacoes WHERE usuario_id = $1 FOR UPDATE', [req.usuario.id]);
     // Impede sobrescrever uma troca concorrente e revoga as sessões anteriores.
-    const atualizado = await pool.query(`
+    const atualizado = await client.query(`
       UPDATE usuarios SET senha_hash = $1, token_version = token_version + 1
       WHERE id = $2 AND senha_hash = $3 RETURNING id
     `, [novoHash, req.usuario.id, resultado.rows[0].senha_hash]);
     if (!atualizado.rowCount) {
+      await client.query('ROLLBACK');
       return res.status(409).json({ erro: 'A senha foi alterada em outra sessão. Entre novamente.' });
     }
-    await pool.query('DELETE FROM senha_recuperacoes WHERE usuario_id = $1', [req.usuario.id]);
+    await client.query('DELETE FROM senha_recuperacoes WHERE usuario_id = $1', [req.usuario.id]);
+    await client.query('COMMIT');
     return res.json({ mensagem: 'Senha alterada. Entre novamente em todos os dispositivos.' });
   } catch (erro) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     console.error('Erro ao alterar senha:', erro);
     return res.status(500).json({ erro: 'Não foi possível alterar a senha.' });
+  } finally {
+    client?.release();
   }
 });
 
@@ -733,8 +773,10 @@ app.post('/eventos', verificarToken, somenteGestores, async (req, res) => {
       Number(congregacaoFinal), usuario_id, legenda?.trim() || null,
     ]);
 
+    await enqueuePush(client, [congregacaoFinal]);
     await client.query('COMMIT');
     transacaoAberta = false;
+    push?.kick(true);
     res.status(201).json({ mensagem: 'Evento criado com sucesso!', evento: resultado.rows[0] });
   } catch (erro) {
     if (transacaoAberta && client) {
@@ -1291,24 +1333,36 @@ app.delete('/mural/:id', verificarToken, somenteGestores, async (req, res) => {
   }
 });
 
+// Serializa alternâncias da mesma pessoa no mesmo alvo. O lock é adquirido
+// antes da consulta de mutação para que ela veja o estado já confirmado.
+async function alternarCurtida(tipo, usuarioId, alvoId) {
+  const tabela = tipo === 'post' ? 'mural_curtidas' : 'mural_comentario_curtidas';
+  const coluna = tipo === 'post' ? 'post_id' : 'comentario_id';
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`curtida:${tipo}:${usuarioId}:${Number(alvoId)}`]);
+    const removida = await client.query(`DELETE FROM ${tabela} WHERE usuario_id = $1 AND ${coluna} = $2`, [usuarioId, alvoId]);
+    if (!removida.rowCount) {
+      await client.query(`INSERT INTO ${tabela} (usuario_id, ${coluna}) VALUES ($1, $2)`, [usuarioId, alvoId]);
+    }
+    await client.query('COMMIT');
+    return !removida.rowCount;
+  } catch (erro) {
+    try { await client.query('ROLLBACK'); } catch { /* preserva o erro original */ }
+    throw erro;
+  } finally {
+    client.release();
+  }
+}
+
 app.post('/mural/:id/curtir', verificarToken, verificarAprovacao, async (req, res) => {
   try {
     const post_id = req.params.id;
     const usuario_id = req.usuario.id;
     if (!idValido(post_id)) return res.status(400).json({ erro: 'Post inválido.' });
 
-    const resultado = await pool.query(`
-      WITH removida AS (
-        DELETE FROM mural_curtidas WHERE usuario_id = $1 AND post_id = $2 RETURNING 1
-      ), inserida AS (
-        INSERT INTO mural_curtidas (usuario_id, post_id)
-        SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM removida)
-        ON CONFLICT (usuario_id, post_id) DO NOTHING
-        RETURNING 1
-      )
-      SELECT EXISTS (SELECT 1 FROM inserida) AS curtiu;
-    `, [usuario_id, post_id]);
-    const curtiu = Boolean(resultado.rows[0]?.curtiu);
+    const curtiu = await alternarCurtida('post', usuario_id, post_id);
     return res.json({ curtiu, mensagem: curtiu ? 'Post curtido!' : 'Curtida removida.' });
   } catch (erro) {
     console.error("Erro ao curtir post:", erro);
@@ -1392,19 +1446,8 @@ app.post('/comentarios/:id/curtir', verificarToken, verificarAprovacao, async (r
     const usuario_id = req.usuario.id;
 
     if (!idValido(comentario_id)) return res.status(400).json({ erro: 'Comentário inválido.' });
-    const resultado = await pool.query(`
-      WITH removida AS (
-        DELETE FROM mural_comentario_curtidas
-        WHERE usuario_id = $1 AND comentario_id = $2 RETURNING 1
-      ), inserida AS (
-        INSERT INTO mural_comentario_curtidas (usuario_id, comentario_id)
-        SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM removida)
-        ON CONFLICT (usuario_id, comentario_id) DO NOTHING
-        RETURNING 1
-      )
-      SELECT EXISTS (SELECT 1 FROM inserida) AS curtiu;
-    `, [usuario_id, comentario_id]);
-    return res.json({ curtiu: Boolean(resultado.rows[0]?.curtiu) });
+    const curtiu = await alternarCurtida('comentario', usuario_id, comentario_id);
+    return res.json({ curtiu });
   } catch (erro) {
     console.error("Erro ao curtir comentário:", erro);
     if (erro?.code === '23503') return res.status(404).json({ erro: 'Comentário não encontrado.' });
@@ -1903,8 +1946,10 @@ app.post('/gestao-datas/publicar', verificarToken, somenteMaster, async (req, re
       [master_id, rascunhos.map(r => r.id)]
     );
 
+    await enqueuePush(client, congregacoes);
     await client.query('COMMIT');
     transacaoAberta = false;
+    push?.kick(true);
     res.json({
       mensagem: 'Todos os eventos foram publicados com sucesso na Agenda geral!',
       quantidadePublicada: rascunhos.length,
@@ -1942,8 +1987,8 @@ const iniciarServidor = async () => {
 
     const PORT = process.env.PORT || 3000;
 
-    app.listen(PORT, () => {
-      console.log(`✅ Servidor rodando na porta ${PORT}!`);
+    const server = app.listen(PORT, () => {
+      console.log(`✅ Servidor rodando na porta ${server.address().port}!`);
     });
 
   } catch (erro) {

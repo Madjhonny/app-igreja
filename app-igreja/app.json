@@ -2,7 +2,7 @@
   "expo": {
     "name": "Agenda ADP",
     "slug": "app-igreja",
-    "version": "1.2.1",
+    "version": "1.3.0",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
     "scheme": "appigreja",
@@ -39,9 +39,11 @@
       ],
       "@react-native-community/datetimepicker",
       "expo-image",
+      ["expo-image-picker", { "photosPermission": "O Agenda ADP usa suas fotos para selecionar uma imagem de perfil ou publicação.", "cameraPermission": false, "microphonePermission": false }],
       "expo-secure-store",
       "expo-web-browser",
-      "expo-status-bar"
+      "expo-status-bar",
+      ["expo-notifications", { "defaultChannel": "agenda", "color": "#2A4B4C" }]
     ],
     "experiments": {
       "typedRoutes": true,
