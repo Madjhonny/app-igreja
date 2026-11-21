@@ -2,6 +2,7 @@ import { Stack } from 'expo-router';
 import { View } from 'react-native';
 import { SessionMonitor } from '@/components/session-monitor';
 import { AppDialogProvider } from '@/components/app-dialog';
+import { ConnectionBanner } from '@/components/connection-banner';
 
 export default function RootLayout() {
   return (
@@ -12,6 +13,7 @@ export default function RootLayout() {
         <Stack.Screen name="index" />
         <Stack.Screen name="(tabs)" />
       </Stack>
+      <ConnectionBanner />
       </View>
     </AppDialogProvider>
   );

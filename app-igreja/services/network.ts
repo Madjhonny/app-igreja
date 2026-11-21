@@ -4,6 +4,20 @@ const WRITE_TIMEOUT_MS = 65000;
 const RETRY_DELAY_MS = 800;
 const RETRYABLE_STATUS = new Set([408, 502, 503, 504]);
 
+type ConnectionStatus = 'ok' | 'unavailable';
+let connectionStatus: ConnectionStatus = 'ok';
+const connectionListeners = new Set<(status: ConnectionStatus) => void>();
+export function getConnectionStatus() { return connectionStatus; }
+export function subscribeConnection(listener: (status: ConnectionStatus) => void) {
+  connectionListeners.add(listener);
+  return () => { connectionListeners.delete(listener); };
+}
+function reportConnection(status: ConnectionStatus) {
+  if (connectionStatus === status) return;
+  connectionStatus = status;
+  connectionListeners.forEach(listener => listener(status));
+}
+
 export class ApiTimeoutError extends Error {
   constructor() {
     super('O servidor demorou para responder. Tente novamente.');
@@ -97,12 +111,18 @@ export async function fetchWithResilience(
       // Respeita autenticação, validação, rate limiting e Retry-After.
       const retry = readOnly && attempt === 0 &&
         RETRYABLE_STATUS.has(response.status) && !response.headers.has('Retry-After');
-      if (!retry) return response;
+      if (!retry) {
+        reportConnection(RETRYABLE_STATUS.has(response.status) ? 'unavailable' : 'ok');
+        return response;
+      }
       // Libera o stream antes de repetir, se o ambiente oferecer esta API.
       void response.body?.cancel().catch(() => undefined);
     } catch (error) {
       const transient = error instanceof ApiTimeoutError || error instanceof TypeError;
-      if (!readOnly || attempt !== 0 || init?.signal?.aborted || !transient) throw error;
+      if (!readOnly || attempt !== 0 || init?.signal?.aborted || !transient) {
+        if (transient && !init?.signal?.aborted) reportConnection('unavailable');
+        throw error;
+      }
     }
     await waitForRetry(retryDelay, init?.signal);
   }
