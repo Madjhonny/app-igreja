@@ -8,6 +8,8 @@ const { Pool } = require('pg');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { performance } = require('node:perf_hooks');
 const { createPushNotifications } = require('../services/push-notifications');
 
 const dbUrl = process.env.PUSH_TEST_DATABASE_URL;
@@ -50,7 +52,7 @@ test('PostgreSQL real: migração, fila transacional, escopo, revogação e reci
   } finally { await pool.end(); }
 });
 
-test('HTTP + PostgreSQL real: login, escopo, concorrência e revogação de sessão', { skip: !dbUrl, timeout: 30000 }, async t => {
+test('HTTP + PostgreSQL real: login, escopo, concorrência e revogação de sessão', { skip: !dbUrl, timeout: 90000 }, async t => {
   const url = new URL(dbUrl);
   assert.ok(['localhost', '127.0.0.1'].includes(url.hostname) && url.pathname === '/agenda_push_test');
   const pool = new Pool({ connectionString: dbUrl });
@@ -108,11 +110,11 @@ test('HTTP + PostgreSQL real: login, escopo, concorrência e revogação de sess
         if (match) { clearTimeout(timer); resolve(Number(match[1])); }
       });
     });
-    const request = async (route, { method = 'GET', token, body, origin } = {}) => {
+    const request = async (route, { method = 'GET', token, body, origin, timeoutMs = 5000 } = {}) => {
       const response = await fetch(`http://127.0.0.1:${port}${route}`, {
         method, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}),
           ...(body ? { 'Content-Type': 'application/json' } : {}), ...(origin ? { Origin: origin } : {}) },
-        body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(5000),
+        body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(timeoutMs),
       });
       return { status: response.status, data: await response.json(), cors: response.headers.get('access-control-allow-origin') };
     };
@@ -390,6 +392,73 @@ test('HTTP + PostgreSQL real: login, escopo, concorrência e revogação de sess
       assert.equal((await request('/sessao', { token })).status, 401);
       assert.equal((await request('/senha/redefinir', { method: 'POST', body: { email: 'change@example.test', codigo: code, nova_senha: 'OutraSenha123!' } })).status, 400);
       assert.equal((await request('/login', { method: 'POST', body: { email: 'change@example.test', senha: 'MudancaSenha123!' } })).status, 200);
+    });
+
+    await t.test('carga real: 800 contas, 50 usuários simultâneos e login com bcrypt de produção', { timeout: 60000 }, async loadTest => {
+      // Volume e identidades fictícios; conexão exclusivamente ao banco local da CI.
+      const productionHash = await bcrypt.hash(senha, 12);
+      const { rows: users } = await pool.query(`INSERT INTO usuarios
+        (nome_completo,nome_exibicao,email,senha_hash,congregacao_id,cpf,status_conta)
+        SELECT 'Carga ' || n, 'Carga ' || n, 'load-' || n || '@example.test', $1, $2,
+          '2' || lpad(n::text,10,'0'), 'APROVADO' FROM generate_series(1,800) n
+        RETURNING id,email,token_version`, [productionHash, a]);
+      await pool.query(`INSERT INTO eventos(titulo,data_inicio,data_fim,horario,congregacao_id,criado_por_usuario_id)
+        SELECT 'Carga evento ' || n, DATE '2030-01-01' + (n % 365), DATE '2030-01-01' + (n % 365),
+          TIME '19:00', $1, $2 FROM generate_series(1,1000) n`, [a, admin]);
+      await pool.query(`INSERT INTO mural_eventos(usuario_id,congregacao_id,titulo,tipo_midia,midia,data_inicio,data_fim)
+        SELECT $1,$2,'Carga mural ' || n,'imagem','https://example.test/image.png',CURRENT_DATE,CURRENT_DATE+30
+        FROM generate_series(1,100) n`, [admin, a]);
+      const postIds = (await pool.query("SELECT id FROM mural_eventos WHERE titulo LIKE 'Carga mural %' ORDER BY id")).rows.map(row => row.id);
+      await pool.query(`INSERT INTO mural_curtidas(usuario_id,post_id)
+        SELECT u.id, p.id FROM unnest($1::int[]) AS u(id) CROSS JOIN unnest($2::int[]) AS p(id)`, [users.slice(0, 20).map(u => u.id), postIds]);
+      const routes = [
+        ['/congregacoes', false, rows => Array.isArray(rows) && rows.some(r => r.id === a)],
+        ['/publico/eventos?mes=6&ano=2030', false, rows => Array.isArray(rows) && rows.length >= 75],
+        ['/eventos?mes=6&ano=2030', true, rows => Array.isArray(rows) && rows.length >= 75],
+        ['/mural?midia=link', true, rows => Array.isArray(rows) && rows.length >= 100 && rows.filter(r => r.titulo.startsWith('Carga mural ')).every(r => r.totalCurtidas === 20)],
+      ];
+      const timings = new Map(routes.map(([route]) => [route, []]));
+      const actors = users.slice(0, 50).map(user => jwt.sign({ id: user.id, token_version: user.token_version }, 'isolated-http-test-only', { expiresIn: '5m' }));
+      const errors = [];
+      // Aquecimento fora das métricas, para não confundir inicialização com carga sustentada.
+      for (const [route, authenticated] of routes) assert.equal((await request(route, { token: authenticated ? actors[0] : undefined })).status, 200);
+      const start = performance.now();
+      await Promise.all(actors.map(async token => {
+        for (let round = 0; round < 4; round++) {
+          for (const [route, authenticated, valid] of routes) {
+            const before = performance.now();
+            try {
+              const result = await request(route, { token: authenticated ? token : undefined });
+              if (result.status !== 200 || !valid(result.data)) errors.push(`${route}: ${result.status} ou resposta inválida`);
+            } catch (error) { errors.push(`${route}: ${error.name}`); }
+            finally { timings.get(route).push(performance.now() - before); }
+          }
+        }
+      }));
+      const elapsed = performance.now() - start;
+      const summarize = values => {
+        const sorted = [...values].sort((a, b) => a - b);
+        const percentile = p => Math.round(sorted[Math.ceil(sorted.length * p) - 1]);
+        return { requests: values.length, p50_ms: percentile(0.5), p95_ms: percentile(0.95), max_ms: percentile(1) };
+      };
+      for (const [route, values] of timings) {
+        const metrics = summarize(values);
+        loadTest.diagnostic(JSON.stringify({ route, ...metrics }));
+        assert.equal(metrics.requests, 200);
+        assert.ok(metrics.p95_ms <= 3000, `${route}: p95 acima de 3 segundos (${metrics.p95_ms}ms)`);
+      }
+      loadTest.diagnostic(JSON.stringify({ total_requests: 800, concurrent_users: 50, errors: errors.length, requests_per_second: Math.round(800000 / elapsed) }));
+      assert.deepEqual(errors, []);
+      const authTimes = await Promise.all(users.slice(0, 8).map(async user => {
+        const before = performance.now();
+        const result = await request('/login', { method: 'POST', body: { email: user.email, senha }, timeoutMs: 15000 });
+        assert.equal(result.status, 200);
+        assert.ok(result.data.token);
+        return performance.now() - before;
+      }));
+      const authMetrics = summarize(authTimes);
+      loadTest.diagnostic(JSON.stringify({ route: '/login', concurrent_users: 8, bcrypt_cost: 12, ...authMetrics }));
+      assert.ok(authMetrics.p95_ms <= 10000, `Login: p95 acima de 10 segundos (${authMetrics.p95_ms}ms)`);
     });
   } finally {
     if (child && child.exitCode === null && child.signalCode === null) {
