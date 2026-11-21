@@ -9,6 +9,8 @@ import {
   getSessionToken,
 } from '@/services/session';
 import { pushAvailable, pushPreference } from '@/services/push-native';
+import { pushOfferKey } from '@/services/push-onboarding';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSessionUser } from '@/hooks/use-session-user';
 
 import React, { useCallback, useState } from 'react';
@@ -59,6 +61,7 @@ export default function TelaPerfil() {
     if (pushBusy || !usuario || usuario.status_conta !== 'APROVADO') return;
     setPushBusy(true);
     try {
+      await AsyncStorage.setItem(pushOfferKey(API_URL, usuario.id), 'true').catch(() => undefined);
       const token = await getSessionToken();
       const ok = pushStatus === 'off'
         ? !!token && await pushPreference.enable(API_URL, usuario.id, token)

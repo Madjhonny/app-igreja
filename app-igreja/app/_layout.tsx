@@ -5,6 +5,7 @@ import { clientMonitor } from '@/services/session';
 import { SessionMonitor } from '@/components/session-monitor';
 import { AppDialogProvider } from '@/components/app-dialog';
 import { ConnectionBanner } from '@/components/connection-banner';
+import { PushOnboarding } from '@/components/push-onboarding';
 
 export function ErrorBoundary({ retry }: ErrorBoundaryProps) {
   useEffect(() => {
@@ -26,6 +27,7 @@ export default function RootLayout() {
     <AppDialogProvider>
       <View style={{ flex: 1 }}>
       <SessionMonitor />
+      <PushOnboarding />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="(tabs)" />

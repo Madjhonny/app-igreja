@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createPushPreference } from '../services/push-preference.ts';
+import { createPushOnboarding } from '../services/push-onboarding.ts';
 
 function setup() {
   let record = null, time = 0, token = 'ExpoPushToken[test_token_123]', fail = false, failRevoke = false;
@@ -49,4 +50,54 @@ test('renova registro sem novo pedido de consentimento e revoga ao mudar de cont
   assert.deepEqual(calls.filter(c => c[0] === 'permission'), [['permission', true], ['permission', false]]);
   await prefs.reconcile('api', 2, 'new');
   assert.equal(await prefs.status(2), 'off');
+});
+
+const approved = { id: 1, status_conta: 'APROVADO' };
+function onboarding(overrides = {}) {
+  const marks = new Set(), calls = [];
+  const deps = { available: true, seen: async k => marks.has(k), remember: async k => { marks.add(k); },
+    status: async () => 'off', confirm: async () => { calls.push('offer'); return true; },
+    currentAuth: async () => 'auth', enable: async () => { calls.push('enable'); return true; },
+    failed: () => calls.push('failed'), ...overrides };
+  return { offer: createPushOnboarding(deps), deps, calls, marks };
+}
+test('aviso inicial apenas para conta aprovada e plataforma habilitada', async () => {
+  const { offer, calls } = onboarding();
+  await offer('api', null); await offer('api', { ...approved, status_conta: 'PENDENTE' });
+  const disabled = onboarding({ available: false }); await disabled.offer('api', approved);
+  assert.deepEqual(calls, []); assert.deepEqual(disabled.calls, []);
+});
+test('aceite abre permissão uma vez e não repete após reiniciar', async () => {
+  const { offer, calls, deps } = onboarding();
+  await Promise.all([offer('api', approved), offer('api', approved)]);
+  await createPushOnboarding(deps)('api', approved);
+  assert.deepEqual(calls, ['offer', 'enable']);
+});
+test('recusa é lembrada sem solicitar permissão do sistema', async () => {
+  let prompts = 0;
+  const { offer, deps, calls } = onboarding({ confirm: async () => { prompts++; return false; } });
+  await offer('api', approved); await createPushOnboarding(deps)('api', approved);
+  assert.equal(prompts, 1); assert.deepEqual(calls, []);
+});
+test('notificações já ativas ou pendentes não recebem novo convite', async () => {
+  for (const status of ['active', 'pending']) {
+    const { offer, calls, marks } = onboarding({ status: async () => status });
+    await offer('api', approved); assert.deepEqual(calls, []); assert.equal(marks.size, 1);
+  }
+});
+test('mudança de sessão durante aviso não registra dispositivo', async () => {
+  let auth = 'auth';
+  const { offer, calls } = onboarding({ currentAuth: async () => auth, confirm: async () => { auth = 'other'; return true; } });
+  await offer('api', approved); assert.deepEqual(calls, []);
+});
+test('falha de ativação informa usuário sem repetir pedido', async () => {
+  const { offer, deps, calls } = onboarding({ enable: async () => false });
+  await offer('api', approved); await createPushOnboarding(deps)('api', approved);
+  assert.deepEqual(calls, ['offer', 'failed']);
+});
+test('decisões iniciais ficam isoladas por conta e API', async () => {
+  const { offer, calls } = onboarding();
+  await offer('api', approved); await offer('api', { ...approved, id: 2 });
+  await offer('other-api', approved);
+  assert.deepEqual(calls, ['offer', 'enable', 'offer', 'enable', 'offer', 'enable']);
 });
