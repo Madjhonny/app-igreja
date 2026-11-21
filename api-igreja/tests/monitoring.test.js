@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { requestMonitoring, healthHandler } = require('../services/monitoring');
+const { requestMonitoring, healthHandler, clientTelemetryHandler } = require('../services/monitoring');
 
 function simulate({ status = 200, duration = 10, route = '/usuarios/:id/foto', abort = false, failLogger = false } = {}) {
   const records = [];
@@ -47,6 +47,24 @@ test('rotas desconhecidas não usam a URL, e saúde normal não gera ruído', ()
 
 test('falha no logger não interrompe a resposta', () => {
   assert.deepEqual(simulate({ failLogger: true }), []);
+});
+
+test('telemetria aceita somente contadores anônimos e rejeita dados extras', () => {
+  const entries = [];
+  const handler = clientTelemetryHandler({ logger: { warn: line => entries.push(JSON.parse(line)) } });
+  const send = body => {
+    const res = { status(n) { this.code = n; return this; }, json() {}, end() {} };
+    handler({ body, ip: 'privado', headers: { authorization: 'segredo' } }, res);
+    return res.code;
+  };
+  const valid = { platform: 'ios', events: [{ category: 'network', count: 2 }] };
+  assert.equal(send(valid), 204);
+  for (const invalid of [null, {}, { ...valid, email: 'privado' }, { ...valid, platform: 'privado' },
+    { ...valid, events: [] }, { ...valid, events: [{ category: 'network', count: 101 }] },
+    { ...valid, events: [{ category: 'network', count: 0 }] }, { ...valid, events: [{ category: 'network', count: 1.5 }] },
+    { ...valid, events: [{ category: 'segredo', count: 1 }] }, { ...valid, events: [{ ...valid.events[0], message: 'privado' }] },
+    { ...valid, events: [valid.events[0], valid.events[0]] }]) assert.equal(send(invalid), 400);
+  assert.deepEqual(entries, [{ event: 'client_diagnostic', ...valid }]);
 });
 
 async function health(handler) {
