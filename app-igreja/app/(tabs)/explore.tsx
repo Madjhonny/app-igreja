@@ -5,6 +5,8 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, TextInput, Modal, ActivityIndicator, Dimensions, FlatList, RefreshControl, StatusBar, BackHandler, PixelRatio, Platform } from 'react-native';
 import { router, useFocusEffect, useNavigation } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { Image as ExpoImage, type ImageLoadEventData } from 'expo-image';
+import { imageAspectRatio, optimizedMuralUrl } from '@/services/mural-image';
 
 // Altura da janela usada apenas como valor inicial; no fullscreen a altura real é medida via onLayout
 const { height } = Dimensions.get('window');
@@ -12,39 +14,36 @@ const { height } = Dimensions.get('window');
 // Compatibilidade com URLs temporárias relativas da API e imagens antigas em Data URI.
 const origemImagem = (valor: string) => valor.startsWith('/') ? apiUrl(valor) : valor;
 
-// Guarda a proporção (altura / largura) real de cada imagem já carregada.
-// Assim, ao rolar o feed e a célula ser recriada, ela já nasce com a altura correta (sem "pulo").
-const proporcoesCache: { [postId: number]: { uri: string; razao: number } } = {};
+// Limita o cache de proporções às últimas 100 imagens, sem cache persistente de links assinados.
+const proporcoesCache = new Map<number, { uri: string; razao: number }>();
 
-// Consulta as dimensões sem depender do formato do evento onLoad no navegador.
-const ImagemFeed = React.memo(function ImagemFeed({ postId, uri }: { postId: number; uri: string }) {
-  const [medida, setMedida] = useState<{ uri: string; razao: number } | null>(null);
-  const cache = proporcoesCache[postId];
-  const razao = medida?.uri === uri ? medida.razao : cache?.uri === uri ? cache.razao : 1;
+const ImagemMural = React.memo(function ImagemMural({ postId, uri, fullscreen = false }: { postId: number; uri: string; fullscreen?: boolean }) {
+  const otimizada = optimizedMuralUrl(uri);
+  const [fallback, setFallback] = useState(false);
+  const [medida, setMedida] = useState<number>();
+  const cache = proporcoesCache.get(postId);
+  const razao = medida ?? (cache?.uri === uri ? cache.razao : 1);
+  const fonte = fallback ? uri : otimizada;
 
-  useEffect(() => {
-    let ativo = true;
-    if (!uri) return;
-    Image.getSize(uri, (largura, altura) => {
-      if (!ativo || !Number.isFinite(largura) || !Number.isFinite(altura) || largura <= 0 || altura <= 0) return;
-      const novaMedida = { uri, razao: altura / largura };
-      proporcoesCache[postId] = novaMedida;
-      setMedida(novaMedida);
-    }, () => {
-      // Mantém a proporção padrão se a imagem não puder ser medida.
-    });
-    return () => { ativo = false; };
-  }, [postId, uri]);
+  const onLoad = ({ source }: ImageLoadEventData) => {
+    const novaRazao = imageAspectRatio(source.width, source.height);
+    if (!novaRazao) return;
+    proporcoesCache.delete(postId);
+    proporcoesCache.set(postId, { uri, razao: novaRazao });
+    if (proporcoesCache.size > 100) proporcoesCache.delete(proporcoesCache.keys().next().value!);
+    setMedida(novaRazao);
+  };
 
-  return (
-    <View style={[styles.mediaImagemFeed, { aspectRatio: 1 / razao }]}>
-      <Image
-        source={{ uri }}
-        style={styles.mediaContentFeed}
-        resizeMode="cover"
-      />
-    </View>
-  );
+  const imagem = <ExpoImage
+    source={{ uri: fonte }}
+    style={fullscreen ? styles.fullscreenImage : styles.mediaContentFeed}
+    contentFit={fullscreen ? 'contain' : 'cover'}
+    cachePolicy={otimizada !== uri ? 'memory-disk' : 'none'}
+    recyclingKey={fonte}
+    onLoad={onLoad}
+    onError={() => { if (!fallback && otimizada !== uri) setFallback(true); }}
+  />;
+  return fullscreen ? imagem : <View style={[styles.mediaImagemFeed, { aspectRatio: razao }]}>{imagem}</View>;
 });
 
 export default function TelaEventos() {
@@ -433,7 +432,7 @@ export default function TelaEventos() {
               </View>
             </View>
           ) : (
-            <ImagemFeed postId={post.id} uri={origemImagem(post.midia)} />
+            <ImagemMural key={post.midia} postId={post.id} uri={origemImagem(post.midia)} />
           )
         ) : null}
 
@@ -470,7 +469,7 @@ export default function TelaEventos() {
                 <Text style={styles.videoTextLarge}>Vídeo indisponível nesta versão</Text>
               </View>
             ) : (
-              <Image source={{ uri: origemImagem(post.midia) }} style={styles.fullscreenImage} resizeMode="contain" />
+              <ImagemMural key={post.midia} postId={post.id} uri={origemImagem(post.midia)} fullscreen />
             )
           ) : (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 }}>
@@ -721,6 +720,9 @@ export default function TelaEventos() {
           data={posts}
           keyExtractor={(item) => item.id.toString()}
           renderItem={renderPostFeed}
+          initialNumToRender={3}
+          maxToRenderPerBatch={3}
+          windowSize={5}
           contentContainerStyle={{ padding: 15, paddingBottom: 80 }}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} colors={['#2A4B4C']} tintColor={'#2A4B4C'} />

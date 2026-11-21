@@ -1,10 +1,12 @@
 import { useAppDialog } from '@/components/app-dialog';
 import { authenticatedFetch } from '@/services/session';
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Image, KeyboardAvoidingView, Platform, Modal } from 'react-native';
 import { router, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import { prepareMuralImage } from '@/services/mural-image';
 
 export default function TelaCriarPost() {
   const { alert: mostrarDialogo } = useAppDialog();
@@ -14,6 +16,8 @@ export default function TelaCriarPost() {
   const [midia, setMidia] = useState<string | null>(null);
   const [tipoMidia, setTipoMidia] = useState<'imagem' | null>(null);
   const [carregando, setCarregando] = useState(false);
+  const [preparando, setPreparando] = useState(false);
+  const preparandoRef = useRef(false);
 
   // Estados do Calendário e Datas
   const [modalCalendarioVisivel, setModalCalendarioVisivel] = useState(false);
@@ -23,32 +27,52 @@ export default function TelaCriarPost() {
   const [anoAtual, setAnoAtual] = useState(new Date().getFullYear());
 
   const escolherMidia = async () => {
-    const permissao = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!permissao.granted) {
-      mostrarDialogo('Permissão negada', 'Precisamos de acesso à galeria para anexar uma imagem.');
-      return;
-    }
-
-    const resultado = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsEditing: true,
-      quality: 0.7,
-      base64: true,
-    });
-
-    if (!resultado.canceled && resultado.assets[0]) {
-      const asset = resultado.assets[0];
-      if (!asset.base64) {
-        mostrarDialogo('Imagem inválida', 'Não foi possível preparar a imagem para envio.');
-        return;
+    if (preparandoRef.current || carregando) return;
+    preparandoRef.current = true;
+    setPreparando(true);
+    try {
+      if (Platform.OS !== 'web') {
+        const permissao = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permissao.granted) {
+          mostrarDialogo('Permissão negada', 'Precisamos de acesso à galeria para anexar uma imagem.');
+          return;
+        }
       }
-      const tamanhoAproximado = Math.ceil(asset.base64.length * 0.75);
-      if (tamanhoAproximado > 1_500_000) {
-        mostrarDialogo('Imagem muito grande', 'Escolha uma imagem de até 1,5 MB.');
-        return;
+
+      const resultado = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        allowsEditing: true,
+        quality: 1,
+        base64: false,
+      });
+
+      if (!resultado.canceled && resultado.assets[0]) {
+        const asset = resultado.assets[0];
+        try {
+          const imagem = await prepareMuralImage(asset, async (uri, resize, quality) => {
+            // O SDK 58 reduz durante a decodificação, evitando manter a foto original inteira na memória.
+            const maxSide = resize ? ('width' in resize ? resize.width : resize.height) : 1600;
+            const context = ImageManipulator.manipulate(uri, { maxWidth: maxSide, maxHeight: maxSide });
+            try {
+              const rendered = await context.renderAsync();
+              try {
+                const saved = await rendered.saveAsync({ format: SaveFormat.JPEG, compress: quality, base64: true });
+                if (Platform.OS === 'web' && saved.uri.startsWith('blob:')) URL.revokeObjectURL(saved.uri);
+                return saved.base64;
+              } finally { rendered.release(); }
+            } finally { context.release(); }
+          });
+          setTipoMidia('imagem');
+          setMidia(imagem);
+        } finally {
+          if (Platform.OS === 'web' && asset.uri.startsWith('blob:')) URL.revokeObjectURL(asset.uri);
+        }
       }
-      setTipoMidia('imagem');
-      setMidia(`data:image/jpeg;base64,${asset.base64}`);
+    } catch {
+      mostrarDialogo('Imagem inválida', 'Não foi possível preparar a imagem. Tente escolher outra foto.');
+    } finally {
+      preparandoRef.current = false;
+      setPreparando(false);
     }
   };
 
@@ -113,6 +137,7 @@ export default function TelaCriarPost() {
   };
 
   const publicarPost = async () => {
+    if (preparandoRef.current || carregando) return;
     if (!titulo || !midia || !dataInicio) {
       return mostrarDialogo('Atenção', 'Preencha o Título, selecione uma Mídia e defina as Datas do Evento.');
     }
@@ -168,8 +193,10 @@ export default function TelaCriarPost() {
       <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <ScrollView style={styles.formContainer} contentContainerStyle={{ paddingBottom: 60 }}>
           
-          <TouchableOpacity style={styles.uploadArea} onPress={escolherMidia}>
-            {midia ? (
+          <TouchableOpacity style={styles.uploadArea} onPress={escolherMidia} disabled={preparando || carregando}>
+            {preparando ? (
+              <View style={styles.uploadPlaceholder}><ActivityIndicator color="#2A4B4C" /><Text style={styles.uploadText}>Preparando imagem...</Text></View>
+            ) : midia ? (
               <View style={styles.midiaPreviewContainer}>
                 <Image source={{ uri: midia }} style={styles.midiaPreview} />
                 <View style={styles.changeMidiaButton}>
@@ -180,7 +207,7 @@ export default function TelaCriarPost() {
             ) : (
               <View style={styles.uploadPlaceholder}>
                 <Ionicons name="cloud-upload-outline" size={50} color="#2A4B4C" />
-                <Text style={styles.uploadText}>Toque para anexar Foto ou Vídeo</Text>
+                <Text style={styles.uploadText}>Toque para anexar uma foto</Text>
               </View>
             )}
           </TouchableOpacity>
@@ -202,7 +229,7 @@ export default function TelaCriarPost() {
           <Text style={styles.label}>Descrição / Legenda</Text>
           <TextInput style={[styles.input, styles.descInput]} placeholder="Escreva algo sobre este evento..." value={descricao} onChangeText={setDescricao} multiline numberOfLines={4} />
 
-          <TouchableOpacity style={[styles.postButton, carregando && styles.buttonDisabled]} onPress={publicarPost} disabled={carregando}>
+          <TouchableOpacity style={[styles.postButton, (carregando || preparando) && styles.buttonDisabled]} onPress={publicarPost} disabled={carregando || preparando}>
             {carregando ? <ActivityIndicator color="#F7F5EC" /> : <Text style={styles.postButtonText}>PUBLICAR NO MURAL</Text>}
           </TouchableOpacity>
 

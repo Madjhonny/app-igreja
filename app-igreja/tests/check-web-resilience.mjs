@@ -18,7 +18,7 @@ const server = createServer(async (req, res) => {
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 let browser;
 try {
-  browser = await chromium.launch();
+  browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
   const page = await browser.newPage({ serviceWorkers: 'block', viewport: { width: 390, height: 844 } });
   let calls = 0, unavailable = true;
   const reports = [];
@@ -50,6 +50,29 @@ try {
   await diagnostic;
   assert.deepEqual(reports, [{ platform: 'web', events: [{ category: 'server', count: 1 }] }]);
   console.log('OK: falha 503, retry, aviso de conexão, recuperação e seleção de congregação.');
+
+  // Teste de upload real no navegador, sem publicar nem usar dados de produção.
+  await page.addInitScript(() => localStorage.setItem('userToken', 'token-teste'));
+  await page.route('http://localhost:3000/sessao', route => route.fulfill({ status: 200,
+    contentType: 'application/json', headers: { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'authorization' },
+    body: JSON.stringify({ usuario: { id: 1, nivel_acesso: 'MASTER', status_conta: 'APROVADO', congregacao_id: 1 } }) }));
+  await page.goto(`http://127.0.0.1:${server.address().port}/criar-post`);
+  const fixture = await page.evaluate(() => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 2400; canvas.height = 1200;
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#2A4B4C'; context.fillRect(0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/png').split(',')[1];
+  });
+  const picker = page.waitForEvent('filechooser');
+  await page.getByText('Toque para anexar uma foto', { exact: true }).click();
+  await (await picker).setFiles({ name: 'foto-teste.png', mimeType: 'image/png', buffer: Buffer.from(fixture, 'base64') });
+  const preview = page.locator('img[src^="data:image/jpeg;base64,"]').first();
+  await preview.waitFor({ state: 'attached', timeout: 20_000 });
+  await page.waitForFunction(() => [...document.images].some(image => image.src.startsWith('data:image/jpeg;base64,') && image.naturalWidth === 1600 && image.naturalHeight === 800));
+  const uri = await preview.getAttribute('src');
+  assert.ok(Buffer.from(uri.split(',')[1], 'base64').length <= 1_500_000);
+  console.log('OK: seleção de imagem real, redimensionamento proporcional e limite de upload.');
 } finally {
   await browser?.close();
   server.close();
