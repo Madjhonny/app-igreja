@@ -5,6 +5,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('node:crypto');
 const { rateLimit } = require('express-rate-limit');
+const { requestMonitoring, healthHandler } = require('./services/monitoring');
 require('dotenv').config();
 
 
@@ -22,6 +23,7 @@ const allowedOrigins = (process.env.CORS_ORIGINS || '')
 
 app.disable('x-powered-by');
 app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS || 1));
+app.use(requestMonitoring());
 app.use(cors({
   origin(origin, callback) {
     // Aplicativos nativos não enviam Origin. Clientes web devem estar na allowlist.
@@ -202,6 +204,8 @@ const pool = new Pool({
       }
     : undefined,
 });
+
+app.get('/health', healthHandler(pool));
 
 // Ativação explícita após migração e homologação. Sem a flag, o mural legado
 // permanece inalterado, inclusive para clientes que enviam Base64.

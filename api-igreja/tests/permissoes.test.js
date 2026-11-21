@@ -52,7 +52,7 @@ function setup(
     }
     return { rows: [], rowCount: 0 };
   } };
-  const mocks = { express, cors: () => () => {}, pg: { Pool: function () { return pool; } },
+  const mocks = { './services/monitoring': require('../services/monitoring'), express, cors: () => () => {}, pg: { Pool: function () { return pool; } },
     'express-rate-limit': { rateLimit: () => (_req, _res, next) => next() },
     bcryptjs: { compare: async () => true, genSalt: async () => 'salt', hash: async () => 'hash' }, 'node:crypto': crypto, dotenv: { config() {} },
     jsonwebtoken: { verify(token) { if (token === 'bad') throw new Error('Invalid'); return { id: 1, nivel_acesso: 'MASTER', status_conta: 'APROVADO' }; }, sign: () => 'token' } };

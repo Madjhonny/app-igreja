@@ -89,6 +89,7 @@ function setup({ user = master, drafts = [], existing = [], failInsert = false, 
     },
   };
   const mocks = {
+    './services/monitoring': require('../services/monitoring'),
     express,
     cors: () => () => {},
     pg: { Pool: function () { return pool; } },
