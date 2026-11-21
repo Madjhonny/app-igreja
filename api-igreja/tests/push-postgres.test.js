@@ -195,6 +195,102 @@ test('HTTP + PostgreSQL real: login, escopo, concorrência e revogação de sess
       assert.deepEqual(await published('Conflito '), [{ titulo: 'Conflito A', legenda: null }, { titulo: 'Conflito B', legenda: null }]);
       assert.ok((await draftState(masterId)).every(row => row.publicado));
     });
+
+    await t.test('mural: curtidas simultâneas, estado individual e privacidade pública', async () => {
+      const adminToken = await login('admin');
+      const postBody = { titulo: 'Mural HTTP', descricao: 'Teste', tipo_midia: 'imagem', midia: 'https://example.test/image.png', data_inicio: '2030-07-01', data_fim: '2030-07-31' };
+      const createPost = token => request('/mural', { method: 'POST', token, body: postBody });
+      assert.equal((await createPost(member)).status, 403);
+      assert.equal((await createPost(pending)).status, 403);
+      const created = await createPost(adminToken);
+      assert.equal(created.status, 201);
+      const id = created.data.post.id;
+      const like = token => request(`/mural/${id}/curtir`, { method: 'POST', token });
+      assert.equal((await like()).status, 401);
+      assert.equal((await like(pending)).status, 403);
+      const toggles = await Promise.all(Array.from({ length: 6 }, () => like(member)));
+      assert.ok(toggles.every(r => r.status === 200));
+      assert.equal(toggles.filter(r => r.data.curtiu).length, 3);
+      assert.equal((await pool.query('SELECT * FROM mural_curtidas WHERE post_id=$1', [id])).rowCount, 0);
+      const distinct = await Promise.all([like(member), like(adminToken)]);
+      assert.ok(distinct.every(r => r.status === 200 && r.data.curtiu));
+      assert.equal((await pool.query('SELECT * FROM mural_curtidas WHERE post_id=$1', [id])).rowCount, 2);
+      for (const [token, liked] of [[member, true], [adminToken, true], [master, false]]) {
+        const result = await request('/mural', { token });
+        assert.equal(result.status, 200);
+        const post = result.data.find(row => row.id === id);
+        assert.equal(post.totalCurtidas, 2);
+        assert.equal(post.curtiuPorMim, liked);
+      }
+      const publicResult = await request('/publico/mural');
+      assert.equal(publicResult.status, 200);
+      const publicPost = publicResult.data.find(row => row.id === id);
+      assert.equal(publicPost.autor, 'Equipe Agenda ADP');
+      assert.equal(publicPost.totalCurtidas, 2);
+      assert.equal(publicPost.curtiuPorMim, false);
+      assert.deepEqual(publicPost.comentarios, []);
+      for (const key of ['usuario_id', 'congregacao_id', 'autor_foto', 'email', 'cpf', 'senha_hash']) assert.equal(Object.hasOwn(publicPost, key), false);
+      assert.equal((await request(`/mural/${id}`, { method: 'DELETE', token: member })).status, 403);
+      assert.equal((await request(`/mural/${id}`, { method: 'DELETE', token: master })).status, 200);
+      assert.equal((await pool.query('SELECT * FROM mural_curtidas WHERE post_id=$1', [id])).rowCount, 0);
+      assert.equal((await like(member)).status, 404);
+    });
+
+    await t.test('mural: respostas, moderação, curtidas de comentários e exclusão em cascata', async () => {
+      const adminToken = await login('admin');
+      const otherId = await addUser('othermember', 'MEMBRO', 'APROVADO', '10000000006');
+      await pool.query('UPDATE usuarios SET congregacao_id=$1 WHERE id=$2', [b, otherId]);
+      const other = await login('othermember');
+      const otherAdminId = await addUser('otheradmin', 'ADMIN', 'APROVADO', '10000000007');
+      await pool.query('UPDATE usuarios SET congregacao_id=$1 WHERE id=$2', [b, otherAdminId]);
+      const otherAdmin = await login('otheradmin');
+      const create = async title => {
+        const result = await request('/mural', { method: 'POST', token: adminToken, body: { titulo: title, tipo_midia: 'imagem', midia: 'https://example.test/image.png', data_inicio: '2030-07-01', data_fim: '2030-07-31' } });
+        assert.equal(result.status, 201);
+        return result.data.post.id;
+      };
+      const id = await create('Comentários HTTP');
+      const second = await create('Outro post HTTP');
+      const comment = (post, token, parent_id) => request(`/mural/${post}/comentarios`, { method: 'POST', token, body: { texto: 'Comentário de teste', parent_id } });
+      assert.equal((await comment(id, pending)).status, 403);
+      assert.equal((await comment(id)).status, 401);
+      const root = await comment(id, member);
+      assert.equal(root.status, 201);
+      assert.equal((await comment(second, other, root.data.id)).status, 400);
+      const reply = await comment(id, other, root.data.id);
+      assert.equal(reply.status, 201);
+      const nested = await comment(id, member, reply.data.id);
+      assert.equal(nested.status, 201);
+      const like = (commentId, token) => request(`/comentarios/${commentId}/curtir`, { method: 'POST', token });
+      assert.equal((await like(root.data.id, pending)).status, 403);
+      const toggles = await Promise.all(Array.from({ length: 5 }, () => like(root.data.id, other)));
+      assert.ok(toggles.every(r => r.status === 200));
+      assert.equal(toggles.filter(r => r.data.curtiu).length, 3);
+      assert.equal((await like(reply.data.id, member)).data.curtiu, true);
+      const list = await request(`/mural/${id}/comentarios`, { token: other });
+      assert.equal(list.status, 200);
+      assert.equal(list.data.length, 3);
+      const row = list.data.find(c => c.id === root.data.id);
+      assert.equal(Number(row.total_curtidas), 1);
+      assert.equal(row.curtiu_por_mim, true);
+      for (const key of ['email', 'cpf', 'telefone', 'senha_hash']) assert.equal(Object.hasOwn(row, key), false);
+      const del = (commentId, token) => request(`/comentarios/${commentId}`, { method: 'DELETE', token });
+      assert.equal((await del(root.data.id, other)).status, 403);
+      assert.equal((await del(root.data.id, pending)).status, 403);
+      assert.equal((await request(`/mural/${id}`, { method: 'DELETE', token: otherAdmin })).status, 403);
+      assert.equal((await del(root.data.id, otherAdmin)).status, 200);
+      assert.equal((await pool.query('SELECT * FROM mural_comentarios WHERE post_id=$1', [id])).rowCount, 0);
+      assert.equal((await pool.query('SELECT * FROM mural_comentario_curtidas WHERE comentario_id = ANY($1::int[])', [[root.data.id, reply.data.id, nested.data.id]])).rowCount, 0);
+      assert.equal((await like(root.data.id, member)).status, 404);
+      const own = await comment(id, member);
+      assert.equal(own.status, 201);
+      assert.equal((await del(own.data.id, member)).status, 200);
+      const moderation = await comment(id, other);
+      assert.equal(moderation.status, 201);
+      assert.equal((await del(moderation.data.id, master)).status, 200);
+      assert.equal((await request(`/mural/${id}`, { method: 'DELETE', token: adminToken })).status, 200);
+      assert.equal((await request(`/mural/${second}`, { method: 'DELETE', token: master })).status, 200);
+    });
   } finally {
     if (child && child.exitCode === null && child.signalCode === null) {
       const exited = once(child, 'exit');

@@ -1323,24 +1323,36 @@ app.delete('/mural/:id', verificarToken, somenteGestores, async (req, res) => {
   }
 });
 
+// Serializa alternâncias da mesma pessoa no mesmo alvo. O lock é adquirido
+// antes da consulta de mutação para que ela veja o estado já confirmado.
+async function alternarCurtida(tipo, usuarioId, alvoId) {
+  const tabela = tipo === 'post' ? 'mural_curtidas' : 'mural_comentario_curtidas';
+  const coluna = tipo === 'post' ? 'post_id' : 'comentario_id';
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [`curtida:${tipo}:${usuarioId}:${Number(alvoId)}`]);
+    const removida = await client.query(`DELETE FROM ${tabela} WHERE usuario_id = $1 AND ${coluna} = $2`, [usuarioId, alvoId]);
+    if (!removida.rowCount) {
+      await client.query(`INSERT INTO ${tabela} (usuario_id, ${coluna}) VALUES ($1, $2)`, [usuarioId, alvoId]);
+    }
+    await client.query('COMMIT');
+    return !removida.rowCount;
+  } catch (erro) {
+    try { await client.query('ROLLBACK'); } catch { /* preserva o erro original */ }
+    throw erro;
+  } finally {
+    client.release();
+  }
+}
+
 app.post('/mural/:id/curtir', verificarToken, verificarAprovacao, async (req, res) => {
   try {
     const post_id = req.params.id;
     const usuario_id = req.usuario.id;
     if (!idValido(post_id)) return res.status(400).json({ erro: 'Post inválido.' });
 
-    const resultado = await pool.query(`
-      WITH removida AS (
-        DELETE FROM mural_curtidas WHERE usuario_id = $1 AND post_id = $2 RETURNING 1
-      ), inserida AS (
-        INSERT INTO mural_curtidas (usuario_id, post_id)
-        SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM removida)
-        ON CONFLICT (usuario_id, post_id) DO NOTHING
-        RETURNING 1
-      )
-      SELECT EXISTS (SELECT 1 FROM inserida) AS curtiu;
-    `, [usuario_id, post_id]);
-    const curtiu = Boolean(resultado.rows[0]?.curtiu);
+    const curtiu = await alternarCurtida('post', usuario_id, post_id);
     return res.json({ curtiu, mensagem: curtiu ? 'Post curtido!' : 'Curtida removida.' });
   } catch (erro) {
     console.error("Erro ao curtir post:", erro);
@@ -1424,19 +1436,8 @@ app.post('/comentarios/:id/curtir', verificarToken, verificarAprovacao, async (r
     const usuario_id = req.usuario.id;
 
     if (!idValido(comentario_id)) return res.status(400).json({ erro: 'Comentário inválido.' });
-    const resultado = await pool.query(`
-      WITH removida AS (
-        DELETE FROM mural_comentario_curtidas
-        WHERE usuario_id = $1 AND comentario_id = $2 RETURNING 1
-      ), inserida AS (
-        INSERT INTO mural_comentario_curtidas (usuario_id, comentario_id)
-        SELECT $1, $2 WHERE NOT EXISTS (SELECT 1 FROM removida)
-        ON CONFLICT (usuario_id, comentario_id) DO NOTHING
-        RETURNING 1
-      )
-      SELECT EXISTS (SELECT 1 FROM inserida) AS curtiu;
-    `, [usuario_id, comentario_id]);
-    return res.json({ curtiu: Boolean(resultado.rows[0]?.curtiu) });
+    const curtiu = await alternarCurtida('comentario', usuario_id, comentario_id);
+    return res.json({ curtiu });
   } catch (erro) {
     console.error("Erro ao curtir comentário:", erro);
     if (erro?.code === '23503') return res.status(404).json({ erro: 'Comentário não encontrado.' });
