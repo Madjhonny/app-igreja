@@ -41,7 +41,8 @@
       "expo-image",
       "expo-secure-store",
       "expo-web-browser",
-      "expo-status-bar"
+      "expo-status-bar",
+      ["expo-notifications", { "defaultChannel": "agenda", "color": "#2A4B4C" }]
     ],
     "experiments": {
       "typedRoutes": true,

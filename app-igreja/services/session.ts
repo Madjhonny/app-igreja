@@ -4,6 +4,7 @@ import { Platform } from 'react-native';
 import { ApiTimeoutError, fetchWithResilience } from './network';
 import { createClientMonitor } from './client-monitoring';
 import { createPublicCache } from './public-cache';
+import { pushPreference } from './push-native';
 
 const DEFAULT_API_URL = 'https://app-igreja-eks0.onrender.com';
 
@@ -60,6 +61,7 @@ export async function getSessionToken() {
     await SecureStore.setItemAsync(TOKEN_KEY, legacyToken);
     await AsyncStorage.removeItem(TOKEN_KEY);
   }
+  if (!legacyToken) void pushPreference.reconcile(API_URL, null, null).catch(() => undefined);
   return legacyToken;
 }
 
@@ -87,6 +89,7 @@ export async function saveSession(token: string, user: SessionUser, keepSignedIn
   await AsyncStorage.setItem(KEEP_KEY, keepSignedIn ? 'true' : 'false');
   await AsyncStorage.removeItem(GUEST_KEY);
   await storeSessionUser(user);
+  void pushPreference.reconcile(API_URL, user.status_conta === 'APROVADO' ? user.id : null, token).catch(() => undefined);
 }
 
 export async function shouldKeepSignedIn() {
@@ -99,6 +102,8 @@ export function apiUrl(pathOrUrl: string) {
 }
 
 export async function clearSession(expectedToken?: string, reason?: string) {
+  if (expectedToken && await getSessionToken() !== expectedToken) return;
+  await pushPreference.disable(API_URL).catch(() => false);
   if (expectedToken && await getSessionToken() !== expectedToken) return;
   publicCache.clear();
   if (Platform.OS !== 'web') await SecureStore.deleteItemAsync(TOKEN_KEY);
@@ -190,6 +195,7 @@ export async function refreshSession(): Promise<SessionUser | null> {
     if (!data.usuario?.id) throw new Error('Resposta de sessão inválida.');
     if (await getSessionToken() !== token) return null;
     await storeSessionUser(data.usuario);
+    void pushPreference.reconcile(API_URL, data.usuario.status_conta === 'APROVADO' ? data.usuario.id : null, token).catch(() => undefined);
     return data.usuario;
   })();
 

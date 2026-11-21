@@ -207,7 +207,20 @@ const pool = new Pool({
     : undefined,
 });
 
+// Desativado por padrão. Não acessa tabelas novas até migração e credenciais.
+const push = process.env.PUSH_NOTIFICATIONS_ENABLED === 'true' && process.env.EXPO_PUSH_ACCESS_TOKEN && !/\s/.test(process.env.EXPO_PUSH_ACCESS_TOKEN)
+  ? require('./services/push-notifications').createPushNotifications({ pool, accessToken: process.env.EXPO_PUSH_ACCESS_TOKEN }) : null;
+if (push) app.use((_req, _res, next) => { push.kick(); next(); });
 app.get('/health', healthHandler(pool));
+
+async function enqueuePush(client, ids) {
+  if (!push) return;
+  // Uma falha na fila não deve impedir a publicação de um evento válido.
+  await client.query('SAVEPOINT push_enqueue');
+  try { await push.enqueue(client, ids); }
+  catch { await client.query('ROLLBACK TO SAVEPOINT push_enqueue'); console.warn('push_enqueue_failed'); }
+  await client.query('RELEASE SAVEPOINT push_enqueue');
+}
 
 // Ativação explícita após migração e homologação. Sem a flag, o mural legado
 // permanece inalterado, inclusive para clientes que enviam Base64.
@@ -410,6 +423,23 @@ const somenteMaster = (req, res, next) => {
   }
   return verificarAprovacao(req, res, next);
 };
+
+const pushLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 60, standardHeaders: 'draft-8', legacyHeaders: false });
+app.post('/notificacoes/dispositivo', pushLimiter, verificarToken, verificarAprovacao, async (req, res) => {
+  if (!push) return res.status(503).json({ erro: 'Notificações temporariamente indisponíveis.' });
+  try {
+    if (!await push.register(req.usuario, req.body)) return res.status(400).json({ erro: 'Registro inválido.' });
+    return res.status(204).end();
+  } catch { return res.status(503).json({ erro: 'Não foi possível ativar as notificações.' }); }
+});
+// A chave aleatória permite revogar o dispositivo mesmo quando a sessão expirou.
+app.post('/notificacoes/desativar', pushLimiter, async (req, res) => {
+  if (!push) return res.status(503).json({ erro: 'Notificações temporariamente indisponíveis.' });
+  try {
+    if (!await push.revoke(req.body)) return res.status(400).json({ erro: 'Registro inválido.' });
+    return res.status(204).end();
+  } catch { return res.status(503).json({ erro: 'Não foi possível desativar as notificações.' }); }
+});
 
 // Dados atuais da sessão, sem senha/hash ou dados de outros usuários.
 app.get('/sessao', verificarToken, async (req, res) => {
@@ -733,8 +763,10 @@ app.post('/eventos', verificarToken, somenteGestores, async (req, res) => {
       Number(congregacaoFinal), usuario_id, legenda?.trim() || null,
     ]);
 
+    await enqueuePush(client, [congregacaoFinal]);
     await client.query('COMMIT');
     transacaoAberta = false;
+    push?.kick(true);
     res.status(201).json({ mensagem: 'Evento criado com sucesso!', evento: resultado.rows[0] });
   } catch (erro) {
     if (transacaoAberta && client) {
@@ -1903,8 +1935,10 @@ app.post('/gestao-datas/publicar', verificarToken, somenteMaster, async (req, re
       [master_id, rascunhos.map(r => r.id)]
     );
 
+    await enqueuePush(client, congregacoes);
     await client.query('COMMIT');
     transacaoAberta = false;
+    push?.kick(true);
     res.json({
       mensagem: 'Todos os eventos foram publicados com sucesso na Agenda geral!',
       quantidadePublicada: rascunhos.length,
