@@ -1,6 +1,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { readFile } = require('node:fs/promises');
+const { readFile, mkdtemp, writeFile, rm } = require('node:fs/promises');
+const { tmpdir } = require('node:os');
+const crypto = require('node:crypto');
 const path = require('node:path');
 const { Pool } = require('pg');
 const { spawn } = require('node:child_process');
@@ -53,6 +55,7 @@ test('HTTP + PostgreSQL real: login, escopo, concorrência e revogação de sess
   assert.ok(['localhost', '127.0.0.1'].includes(url.hostname) && url.pathname === '/agenda_push_test');
   const pool = new Pool({ connectionString: dbUrl });
   let child;
+  let mailDir;
   try {
     for (const filename of ['001_initial_schema.sql', '003_password_recovery.sql']) {
       await pool.query(await readFile(path.join(__dirname, '../migrations', filename), 'utf8'));
@@ -70,13 +73,27 @@ test('HTTP + PostgreSQL real: login, escopo, concorrência e revogação de sess
     await addUser('pending', 'ADMIN', 'PENDENTE', '10000000003');
 
     // Não herda credenciais ou integrações do ambiente real.
-    child = spawn(process.execPath, [path.join(__dirname, '../server.js')], {
+    mailDir = await mkdtemp(path.join(tmpdir(), 'agenda-mail-test-'));
+    const mailPath = path.join(mailDir, 'outbox.jsonl');
+    await writeFile(mailPath, '');
+    // Intercepta todo tráfego externo do processo; só aceita o provedor simulado.
+    child = spawn(process.execPath, ['-e', `
+      global.fetch = async (url, init) => {
+        if (url !== 'https://api.resend.com/emails') throw new Error('Rede externa bloqueada no teste');
+        const message = JSON.parse(init.body);
+        require('node:fs').appendFileSync(process.env.TEST_MAIL_PATH, JSON.stringify(message) + '\\n');
+        return { ok: !message.to.includes('mailfailure@example.test') };
+      };
+      require(process.argv[1]);
+    `, path.join(__dirname, '../server.js')], {
       cwd: __dirname,
       env: { PORT: '0', DB_HOST: url.hostname, DB_PORT: url.port || '5432',
         DB_NAME: 'agenda_push_test', DB_USER: decodeURIComponent(url.username),
         DB_PASSWORD: decodeURIComponent(url.password), DB_SSL: 'false',
         JWT_SECRET: 'isolated-http-test-only', PUSH_NOTIFICATIONS_ENABLED: 'false',
-        CORS_ORIGINS: 'https://test.example.test', NODE_ENV: 'test' },
+        CORS_ORIGINS: 'https://test.example.test', NODE_ENV: 'test',
+        RESEND_API_KEY: 'test-only', EMAIL_FROM: 'test@example.test', TEST_MAIL_PATH: mailPath,
+        RESET_REQUEST_RATE_LIMIT: '100', RESET_VERIFY_RATE_LIMIT: '100' },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let logs = '';
@@ -291,6 +308,89 @@ test('HTTP + PostgreSQL real: login, escopo, concorrência e revogação de sess
       assert.equal((await request(`/mural/${id}`, { method: 'DELETE', token: adminToken })).status, 200);
       assert.equal((await request(`/mural/${second}`, { method: 'DELETE', token: master })).status, 200);
     });
+
+    await t.test('recuperação de senha: envio único, expiração, limite de tentativas e uso único concorrente', async () => {
+      const userId = await addUser('recovery', 'MEMBRO', 'APROVADO', '10000000008');
+      const blockedId = await addUser('blocked', 'MEMBRO', 'BLOQUEADO', '10000000009');
+      const failureId = await addUser('mailfailure', 'MEMBRO', 'APROVADO', '10000000010');
+      const oldToken = await login('recovery');
+      const email = 'recovery@example.test';
+      const requestCode = email => request('/senha/solicitar-recuperacao', { method: 'POST', body: { email } });
+      const reset = (codigo, nova_senha) => request('/senha/redefinir', { method: 'POST', body: { email, codigo, nova_senha } });
+      const outbox = async () => (await readFile(mailPath, 'utf8')).trim().split('\n').filter(Boolean).map(JSON.parse);
+      const state = async id => (await pool.query('SELECT * FROM senha_recuperacoes WHERE usuario_id=$1', [id])).rows[0];
+      const latestCode = async () => (await outbox()).filter(m => m.to.includes(email)).at(-1).text.match(/\b\d{8}\b/)[0];
+      const attempts = await Promise.all(Array.from({ length: 4 }, () => requestCode(email)));
+      assert.ok(attempts.every(r => r.status === 202));
+      assert.equal((await outbox()).length, 1);
+      const absent = await requestCode('notregistered@example.test');
+      const blocked = await requestCode('blocked@example.test');
+      assert.equal(absent.status, 202);
+      assert.deepEqual(absent.data, attempts[0].data);
+      assert.deepEqual(blocked.data, absent.data);
+      assert.equal(await state(blockedId), undefined);
+      assert.equal((await outbox()).length, 1);
+      assert.equal((await requestCode('mailfailure@example.test')).status, 202);
+      assert.equal(await state(failureId), undefined);
+      assert.equal((await requestCode('mailfailure@example.test')).status, 202);
+      assert.equal((await outbox()).filter(m => m.to.includes('mailfailure@example.test')).length, 2);
+      let code = await latestCode();
+      const row = await state(userId);
+      assert.equal(row.codigo_hash, crypto.createHmac('sha256', 'isolated-http-test-only').update(`${userId}:${code}`).digest('hex'));
+      assert.equal(row.expira_em.getTime() - row.enviado_em.getTime(), 15 * 60 * 1000);
+      await pool.query("UPDATE senha_recuperacoes SET expira_em=NOW()-INTERVAL '1 second' WHERE usuario_id=$1", [userId]);
+      assert.equal((await reset(code, 'NovaSenha123!')).status, 400);
+      assert.equal(await state(userId), undefined);
+      assert.equal((await requestCode(email)).status, 202);
+      code = await latestCode();
+      const wrong = code === '00000000' ? '00000001' : '00000000';
+      const wrongResults = await Promise.all(Array.from({ length: 5 }, () => reset(wrong, 'NovaSenha123!')));
+      assert.ok(wrongResults.every(r => r.status === 400));
+      assert.equal((await state(userId)).tentativas, 5);
+      assert.equal((await reset(code, 'NovaSenha123!')).status, 400);
+      assert.equal(await state(userId), undefined);
+      assert.equal((await request('/sessao', { token: oldToken })).status, 200);
+      assert.equal((await requestCode(email)).status, 202);
+      code = await latestCode();
+      const passwords = ['NovaSenha123!', 'OutraSenha456!'];
+      const results = await Promise.all(passwords.map(password => reset(code, password)));
+      assert.deepEqual(results.map(r => r.status).sort(), [200, 400]);
+      assert.equal(await state(userId), undefined);
+      assert.equal((await reset(code, 'TerceiraSenha789!')).status, 400);
+      assert.equal((await request('/sessao', { token: oldToken })).status, 401);
+      const loginWith = senha => request('/login', { method: 'POST', body: { email, senha } });
+      assert.equal((await loginWith(senha)).status, 400);
+      assert.equal((await loginWith(passwords[results.findIndex(r => r.status === 400)] )).status, 400);
+      assert.equal((await loginWith(passwords[results.findIndex(r => r.status === 200)] )).status, 200);
+      assert.equal((await pool.query('SELECT token_version FROM usuarios WHERE id=$1', [userId])).rows[0].token_version, 1);
+    });
+
+    await t.test('troca autenticada: falha ao revogar código reverte senha e sessão; nova tentativa funciona', async () => {
+      const userId = await addUser('change', 'MEMBRO', 'APROVADO', '10000000011');
+      const token = await login('change');
+      const code = '12345678';
+      const codeHash = crypto.createHmac('sha256', 'isolated-http-test-only').update(`${userId}:${code}`).digest('hex');
+      await pool.query("INSERT INTO senha_recuperacoes(usuario_id,codigo_hash,expira_em) VALUES($1,$2,NOW()+INTERVAL '15 minutes')", [userId, codeHash]);
+      const change = () => request('/senha/alterar', { method: 'POST', token, body: { senha_atual: senha, nova_senha: 'MudancaSenha123!' } });
+      await pool.query("CREATE FUNCTION teste_falha_revogacao() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'Falha de teste'; END; $$");
+      await pool.query('CREATE TRIGGER teste_falha_revogacao BEFORE DELETE ON senha_recuperacoes FOR EACH ROW EXECUTE FUNCTION teste_falha_revogacao()');
+      try {
+        assert.equal((await change()).status, 500);
+        assert.equal((await request('/sessao', { token })).status, 200);
+        assert.equal((await pool.query('SELECT codigo_hash FROM senha_recuperacoes WHERE usuario_id=$1', [userId])).rows[0].codigo_hash, codeHash);
+        assert.equal((await pool.query('SELECT senha_hash FROM usuarios WHERE id=$1', [userId])).rows[0].senha_hash, hash);
+      } finally {
+        await pool.query('DROP TRIGGER teste_falha_revogacao ON senha_recuperacoes');
+        await pool.query('DROP FUNCTION teste_falha_revogacao()');
+      }
+      const results = await Promise.all([change(), change()]);
+      assert.equal(results.filter(r => r.status === 200).length, 1);
+      assert.ok(results.every(r => [200, 401, 403, 409].includes(r.status)));
+      assert.equal((await pool.query('SELECT * FROM senha_recuperacoes WHERE usuario_id=$1', [userId])).rowCount, 0);
+      assert.equal((await request('/sessao', { token })).status, 401);
+      assert.equal((await request('/senha/redefinir', { method: 'POST', body: { email: 'change@example.test', codigo: code, nova_senha: 'OutraSenha123!' } })).status, 400);
+      assert.equal((await request('/login', { method: 'POST', body: { email: 'change@example.test', senha: 'MudancaSenha123!' } })).status, 200);
+    });
   } finally {
     if (child && child.exitCode === null && child.signalCode === null) {
       const exited = once(child, 'exit');
@@ -298,5 +398,6 @@ test('HTTP + PostgreSQL real: login, escopo, concorrência e revogação de sess
       await exited;
     }
     await pool.end();
+    if (mailDir) await rm(mailDir, { recursive: true, force: true });
   }
 });

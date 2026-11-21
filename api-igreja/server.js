@@ -563,25 +563,35 @@ app.post('/senha/alterar', verificarToken, alterarSenhaLimiter, async (req, res)
   }
   if (senha_atual === nova_senha) return res.status(400).json({ erro: 'A nova senha deve ser diferente da atual.' });
 
+  let client;
   try {
     const resultado = await pool.query('SELECT senha_hash FROM usuarios WHERE id = $1', [req.usuario.id]);
     if (!resultado.rowCount || !await bcrypt.compare(senha_atual, resultado.rows[0].senha_hash)) {
       return res.status(403).json({ erro: 'A senha atual está incorreta.' });
     }
     const novoHash = await bcrypt.hash(nova_senha, 12);
+    client = await pool.connect();
+    await client.query('BEGIN');
+    // Mesma ordem de locks da redefinição: recuperação antes do usuário.
+    await client.query('SELECT usuario_id FROM senha_recuperacoes WHERE usuario_id = $1 FOR UPDATE', [req.usuario.id]);
     // Impede sobrescrever uma troca concorrente e revoga as sessões anteriores.
-    const atualizado = await pool.query(`
+    const atualizado = await client.query(`
       UPDATE usuarios SET senha_hash = $1, token_version = token_version + 1
       WHERE id = $2 AND senha_hash = $3 RETURNING id
     `, [novoHash, req.usuario.id, resultado.rows[0].senha_hash]);
     if (!atualizado.rowCount) {
+      await client.query('ROLLBACK');
       return res.status(409).json({ erro: 'A senha foi alterada em outra sessão. Entre novamente.' });
     }
-    await pool.query('DELETE FROM senha_recuperacoes WHERE usuario_id = $1', [req.usuario.id]);
+    await client.query('DELETE FROM senha_recuperacoes WHERE usuario_id = $1', [req.usuario.id]);
+    await client.query('COMMIT');
     return res.json({ mensagem: 'Senha alterada. Entre novamente em todos os dispositivos.' });
   } catch (erro) {
+    if (client) await client.query('ROLLBACK').catch(() => {});
     console.error('Erro ao alterar senha:', erro);
     return res.status(500).json({ erro: 'Não foi possível alterar a senha.' });
+  } finally {
+    client?.release();
   }
 });
 
