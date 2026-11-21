@@ -63,3 +63,13 @@ test('configuração nativa remove câmera e microfone, preserva galeria e notif
   assert.equal(config.ios.infoPlist.NSCameraUsageDescription, undefined);
   assert.ok(config.ios.entitlements['aps-environment']);
 });
+
+test('preview gera APK interno com versionCode remoto incremental e ambiente isolado', () => {
+  const eas = require('../eas.json');
+  assert.equal(eas.cli.appVersionSource, 'remote');
+  assert.equal(eas.build.preview.autoIncrement, true);
+  assert.equal(eas.build.preview.environment, 'preview');
+  assert.equal(eas.build.preview.distribution, 'internal');
+  assert.equal(eas.build.preview.android.buildType, 'apk');
+  assert.equal(eas.build.production.environment, 'production');
+});
