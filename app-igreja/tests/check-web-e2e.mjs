@@ -100,7 +100,7 @@ try {
   assert.equal(await page.getByRole('button', { name: 'Curtir publicação' }).count(), 0);
   await page.getByRole('button', { name: 'Ver comentários' }).click();
   await visible('Acesso restrito');
-  await page.getByRole('button', { name: 'OK', exact: true }).click();
+  await page.getByRole('button', { name: 'Entendi', exact: true }).click();
   await tab('Perfil');
   await page.getByRole('button', { name: 'Entrar na minha conta' }).click();
   await page.waitForURL('**/login');
