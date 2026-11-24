@@ -427,68 +427,166 @@ export default function TelaEventos() {
 
   // Renderização da lista principal (feed tradicional)
   const renderPostFeed = ({ item: post, index }: { item: any, index: number }) => {
-    const curInfo = postsCurtidas[post.id] || { total: post.totalCurtidas, curtiu: post.curtiuPorMim };
+    const curInfo = postsCurtidas[post.id] || {
+      total: post.totalCurtidas,
+      curtiu: post.curtiuPorMim
+    };
+
     const autorFoto = post.autor_foto;
+    const totalCurtidas = Math.max(0, Number(curInfo.total) || 0);
 
     return (
-      <TouchableOpacity style={[styles.postCard, Platform.OS === 'web' && styles.postCardWeb]} activeOpacity={0.95} onPress={() => abrirFullscreenNoPost(index)}>
+      <View style={[
+        styles.postCard,
+        Platform.OS === 'web' && styles.postCardWeb
+      ]}>
         <View style={styles.postHeader}>
-          <TouchableOpacity 
-            style={styles.authorContainer} 
-            onPress={(e) => { e.stopPropagation(); if (!convidado) router.push({ pathname: '/perfil-publico', params: { id: post.usuario_id } } as any); }}
+          <TouchableOpacity
+            style={styles.authorContainer}
+            disabled={convidado}
+            accessibilityRole="button"
+            accessibilityLabel={`Perfil de ${post.autor}`}
+            onPress={() => {
+              if (!convidado) {
+                router.push({
+                  pathname: '/perfil-publico',
+                  params: { id: post.usuario_id }
+                } as any);
+              }
+            }}
           >
             {autorFoto ? (
-              <Image source={{ uri: autorFoto }} style={styles.authorAvatar} />
+              <Image
+                source={{ uri: autorFoto }}
+                style={styles.authorAvatar}
+              />
             ) : (
               <View style={styles.authorAvatarPlaceholder}>
                 <Ionicons name="person" size={18} color="#777" />
               </View>
             )}
-            <View>
-              <Text style={styles.authorName}>{post.autor}</Text>
+
+            <View style={{ flex: 1 }}>
+              <Text style={styles.authorName} numberOfLines={2}>
+                {post.autor}
+              </Text>
             </View>
           </TouchableOpacity>
 
           {podeExcluirPost(post) && (
-            <TouchableOpacity onPress={(e) => { e.stopPropagation(); excluirPost(post.id); }} style={{ padding: 5 }}>
-              <Ionicons name="trash-outline" size={18} color="#E63946" />
+            <TouchableOpacity
+              onPress={() => excluirPost(post.id)}
+              style={styles.postIconButton}
+              accessibilityRole="button"
+              accessibilityLabel="Excluir publicação"
+            >
+              <Ionicons
+                name="trash-outline"
+                size={21}
+                color="#B83E43"
+              />
             </TouchableOpacity>
           )}
         </View>
 
-        <View style={styles.postInfoBox}>
-          <Text style={styles.postTitle}>{post.titulo}</Text>
-          {post.local ? <Text style={styles.postLocal}>📍 {post.local}</Text> : null}
-          <Text style={styles.postDesc} numberOfLines={2}>{post.descricao}</Text>
-        </View>
-
         {post.midia ? (
-          post.tipo === 'video' ? (
-            <View style={styles.mediaContainerFeed}>
-              <View style={styles.videoPlaceholder}>
-                <Ionicons name="play-circle" size={40} color="#fff" />
-                <Text style={styles.videoText}>Vídeo</Text>
+          <TouchableOpacity
+            activeOpacity={0.96}
+            onPress={() => abrirFullscreenNoPost(index)}
+            accessibilityRole="button"
+            accessibilityLabel={`Ampliar publicação: ${post.titulo}`}
+          >
+            {post.tipo === 'video' ? (
+              <View style={styles.mediaContainerFeed}>
+                <View style={styles.videoPlaceholder}>
+                  <Ionicons
+                    name="play-circle"
+                    size={40}
+                    color="#fff"
+                  />
+                  <Text style={styles.videoText}>Vídeo</Text>
+                </View>
               </View>
-            </View>
-          ) : (
-            <ImagemMural key={post.midia} postId={post.id} uri={origemImagem(post.midia)} />
-          )
+            ) : (
+              <ImagemMural
+                key={post.midia}
+                postId={post.id}
+                uri={origemImagem(post.midia)}
+              />
+            )}
+          </TouchableOpacity>
         ) : null}
 
-        <View style={styles.postActionsFooter} onStartShouldSetResponder={() => true}>
-          {podeInteragir && <TouchableOpacity style={styles.actionButton} onPress={() => curtirPost(post.id)} accessibilityRole="button" accessibilityLabel="Curtir publicação">
-            <Ionicons name={curInfo.curtiu ? "heart" : "heart-outline"} size={22} color={curInfo.curtiu ? "#E63946" : "#444"} />
-            <Text style={[styles.actionCount, curInfo.curtiu && { color: '#E63946', fontWeight: 'bold' }]}>
-              {curInfo.total}
-            </Text>
-          </TouchableOpacity>}
+        <View style={styles.postActionsFooter}>
+          {podeInteragir && (
+            <TouchableOpacity
+              style={styles.postIconButton}
+              onPress={() => curtirPost(post.id)}
+              accessibilityRole="button"
+              accessibilityLabel={
+                curInfo.curtiu
+                  ? 'Remover curtida'
+                  : 'Curtir publicação'
+              }
+              accessibilityState={{ selected: !!curInfo.curtiu }}
+            >
+              <Ionicons
+                name={curInfo.curtiu ? 'heart' : 'heart-outline'}
+                size={27}
+                color={curInfo.curtiu ? '#E63946' : '#2A4B4C'}
+              />
+            </TouchableOpacity>
+          )}
 
-          <TouchableOpacity style={styles.actionButton} onPress={() => abrirComentarios(post.id)} accessibilityRole="button" accessibilityLabel="Ver comentários">
-            <Ionicons name="chatbubble-outline" size={20} color="#444" />
-            <Text style={styles.actionCount}>{podeInteragir ? 'Comentar' : 'Ver comentários'}</Text>
+          <TouchableOpacity
+            style={styles.postIconButton}
+            onPress={() => abrirComentarios(post.id)}
+            accessibilityRole="button"
+            accessibilityLabel="Ver comentários"
+          >
+            <Ionicons
+              name="chatbubble-outline"
+              size={24}
+              color="#2A4B4C"
+            />
           </TouchableOpacity>
         </View>
-      </TouchableOpacity>
+
+        <View style={styles.postInfoBox}>
+          {podeInteragir && (
+            <Text style={styles.postLikesText}>
+              {totalCurtidas} {totalCurtidas === 1 ? 'curtida' : 'curtidas'}
+            </Text>
+          )}
+
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onPress={() => abrirFullscreenNoPost(index)}
+            accessibilityRole="button"
+            accessibilityLabel={`Abrir publicação: ${post.titulo}`}
+          >
+            <Text style={styles.postTitle}>
+              {post.titulo}
+            </Text>
+
+            {post.descricao ? (
+              <Text style={styles.postDesc}>
+                {post.descricao}
+              </Text>
+            ) : null}
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.postCommentsLink}
+            onPress={() => abrirComentarios(post.id)}
+            accessibilityRole="button"
+          >
+            <Text style={styles.postCommentsText}>
+              Ver comentários
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </View>
     );
   };
 
@@ -1061,8 +1159,8 @@ const styles = StyleSheet.create({
   authorAvatarPlaceholder: { width: 40, height: 40, borderRadius: 20, backgroundColor: '#E2EAE9', justifyContent: 'center', alignItems: 'center', marginRight: 10 },
   authorName: { fontSize: 15, fontWeight: 'bold', color: '#2A4B4C' },
 
-  postInfoBox: { paddingHorizontal: 15, paddingBottom: 8 },
-  postTitle: { fontSize: 16, fontWeight: 'bold', color: '#333', marginBottom: 2 },
+  postInfoBox: { paddingHorizontal: 15, paddingTop: 2, paddingBottom: 8 },
+  postTitle: { fontSize: 16, fontWeight: '700', color: '#2A4B4C', marginBottom: 5 },
   postLocal: { fontSize: 13, color: '#666', marginBottom: 4 },
   postDesc: { fontSize: 14, color: '#444', lineHeight: 20 },
 
@@ -1077,13 +1175,38 @@ const styles = StyleSheet.create({
   postActionsFooter: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderTopWidth: 1,
-    borderTopColor: '#E2EAE9',
-    paddingVertical: 12,
-    paddingHorizontal: 15,
+    paddingHorizontal: 10,
+    paddingTop: 5,
+    paddingBottom: 2,
+    gap: 4,
   },
-  actionButton: { flexDirection: 'row', alignItems: 'center', marginRight: 25 },
-  actionCount: { fontSize: 14, color: '#444', marginLeft: 6 },
+
+  postIconButton: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  postLikesText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#2A4B4C',
+    marginBottom: 8,
+  },
+
+  postCommentsLink: {
+    minHeight: 44,
+    justifyContent: 'center',
+    alignSelf: 'flex-start',
+    marginTop: 2,
+  },
+
+  postCommentsText: {
+    fontSize: 13,
+    color: '#666',
+    fontWeight: '500',
+  },
 
   // Estilos do Modo Fullscreen
   fullscreenWrapper: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 9999 },
