@@ -1356,6 +1356,109 @@ async function alternarCurtida(tipo, usuarioId, alvoId) {
   }
 }
 
+// ========================================================
+// INTERESSES PRIVADOS DO MURAL
+// ========================================================
+
+app.get('/mural/interesses', verificarToken, verificarAprovacao, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+
+  try {
+    const resultado = await pool.query(`
+      SELECT i.post_id
+      FROM mural_interesses i
+      INNER JOIN mural_eventos m ON m.id = i.post_id
+      WHERE i.usuario_id = $1
+        AND m.data_fim >= CURRENT_DATE
+      ORDER BY i.criado_em DESC, i.post_id DESC
+    `, [req.usuario.id]);
+
+    return res.json({
+      post_ids: resultado.rows.map(row => row.post_id)
+    });
+  } catch {
+    return res.status(500).json({
+      erro: 'Não foi possível consultar seus interesses.'
+    });
+  }
+});
+
+app.put('/mural/:id/interesse', verificarToken, verificarAprovacao, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+
+  const postId = req.params.id;
+
+  if (!idValido(postId)) {
+    return res.status(400).json({
+      erro: 'Identificador de publicação inválido.'
+    });
+  }
+
+  try {
+    const resultado = await pool.query(`
+      INSERT INTO mural_interesses (usuario_id, post_id)
+      SELECT $1, m.id
+      FROM mural_eventos m
+      WHERE m.id = $2
+        AND m.data_fim >= CURRENT_DATE
+      ON CONFLICT (usuario_id, post_id)
+      DO UPDATE SET post_id = EXCLUDED.post_id
+      RETURNING post_id
+    `, [req.usuario.id, Number(postId)]);
+
+    if (!resultado.rowCount) {
+      return res.status(404).json({
+        erro: 'Publicação inexistente ou encerrada.'
+      });
+    }
+
+    return res.json({
+      post_id: resultado.rows[0].post_id,
+      interesse: true
+    });
+  } catch (erro) {
+    if (erro.code === '23503') {
+      return res.status(404).json({
+        erro: 'Publicação ou conta indisponível.'
+      });
+    }
+
+    return res.status(500).json({
+      erro: 'Não foi possível marcar seu interesse.'
+    });
+  }
+});
+
+app.delete('/mural/:id/interesse', verificarToken, verificarAprovacao, async (req, res) => {
+  res.set('Cache-Control', 'no-store');
+
+  const postId = req.params.id;
+
+  if (!idValido(postId)) {
+    return res.status(400).json({
+      erro: 'Identificador de publicação inválido.'
+    });
+  }
+
+  try {
+    await pool.query(`
+      DELETE FROM mural_interesses
+      WHERE usuario_id = $1
+        AND post_id = $2
+    `, [req.usuario.id, Number(postId)]);
+
+    return res.json({
+      post_id: Number(postId),
+      interesse: false
+    });
+  } catch {
+    return res.status(500).json({
+      erro: 'Não foi possível remover seu interesse.'
+    });
+  }
+});
+
+
 app.post('/mural/:id/curtir', verificarToken, verificarAprovacao, async (req, res) => {
   try {
     const post_id = req.params.id;

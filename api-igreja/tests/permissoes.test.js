@@ -386,3 +386,210 @@ test('convidado sem login nao pode modificar informacoes protegidas', async () =
     );
   }
 });
+
+
+const rotasInteresses = [
+  ['get', '/mural/interesses'],
+  ['put', '/mural/:id/interesse'],
+  ['delete', '/mural/:id/interesse']
+];
+
+for (const nivel of ['MASTER', 'ADMIN', 'MEMBRO']) {
+  test(`Interesses: ${nivel} aprovado pode acessar as rotas`, async () => {
+    const s = setup({
+      id: 1,
+      nivel_acesso: nivel,
+      status_conta: 'APROVADO',
+      congregacao_id: 10
+    });
+
+    for (const [method, url] of rotasInteresses) {
+      const before = s.queries.length;
+      const response = await s.call(method, url);
+
+      assert.equal(response.code, method === 'put' ? 404 : 200);
+      assert.equal(s.queries.length, before + 2);
+      assert.equal(response.headers['Cache-Control'], 'no-store');
+    }
+  });
+}
+
+for (const nivel of ['MASTER', 'ADMIN', 'MEMBRO']) {
+  for (const status of ['PENDENTE', 'BLOQUEADO', 'RECUSADO']) {
+    test(`Interesses: ${nivel} ${status} nao pode acessar`, async () => {
+      const s = setup({
+        id: 1,
+        nivel_acesso: nivel,
+        status_conta: status,
+        congregacao_id: 10
+      });
+
+      for (const [method, url] of rotasInteresses) {
+        const before = s.queries.length;
+        const response = await s.call(method, url);
+
+        assert.equal(response.code, 403);
+        assert.equal(s.queries.length, before + 1);
+      }
+    });
+  }
+}
+
+test('Interesses: convidado nao acessa rotas privadas', async () => {
+  const s = setup();
+
+  for (const [method, url] of rotasInteresses) {
+    const response = await s.call(method, url, {}, '');
+
+    assert.equal(response.code, 401);
+  }
+
+  assert.equal(s.queries.length, 0);
+});
+
+test('Interesses: tokens invalidos sao rejeitados', async () => {
+  const s = setup();
+
+  for (const header of [
+    'Bearer bad',
+    'Basic valid',
+    'Bearer valid extra'
+  ]) {
+    for (const [method, url] of rotasInteresses) {
+      const response = await s.call(method, url, {}, header);
+
+      assert.equal(response.code, 401);
+    }
+  }
+
+  assert.equal(s.queries.length, 0);
+});
+
+test('Interesses: usuario removido nao acessa', async () => {
+  const s = setup(null);
+
+  for (const [method, url] of rotasInteresses) {
+    const response = await s.call(method, url);
+
+    assert.equal(response.code, 401);
+  }
+});
+
+test('Interesses: identificadores invalidos sao rejeitados', async () => {
+  const s = setup();
+
+  for (const id of [
+    '0', '-1', '1.5', '1e2', '02',
+    '+2', ' 2', '0x10', 'abc', '2147483648'
+  ]) {
+    for (const method of ['put', 'delete']) {
+      const before = s.queries.length;
+
+      const response = await s.call(
+        method,
+        '/mural/:id/interesse',
+        {},
+        'Bearer valid',
+        id
+      );
+
+      assert.equal(response.code, 400);
+      assert.equal(s.queries.length, before + 1);
+    }
+  }
+});
+
+test('Interesses: consulta utiliza somente identidade autenticada', async () => {
+  const s = setup();
+
+  const response = await s.call(
+    'get',
+    '/mural/interesses',
+    { usuario_id: 999 }
+  );
+
+  assert.equal(response.code, 200);
+  assert.equal(response.data.post_ids.length, 0);
+
+  const query = s.queries.at(-1);
+
+  assert.match(query.sql, /i\.usuario_id = \$1/);
+  assert.match(query.sql, /m\.data_fim >= CURRENT_DATE/);
+  assert.equal(query.values.length, 1);
+  assert.equal(query.values[0], 1);
+});
+
+test('Interesses: marcacao ignora identidade enviada pelo cliente', async () => {
+  const s = setup();
+
+  const response = await s.call(
+    'put',
+    '/mural/:id/interesse',
+    { usuario_id: 999, post_id: 999 },
+    'Bearer valid',
+    '25'
+  );
+
+  assert.equal(response.code, 404);
+
+  const query = s.queries.at(-1);
+
+  assert.match(query.sql, /INSERT INTO mural_interesses/);
+  assert.match(query.sql, /ON CONFLICT \(usuario_id, post_id\)/);
+  assert.equal(query.values.length, 2);
+  assert.equal(query.values[0], 1);
+  assert.equal(query.values[1], 25);
+});
+
+test('Interesses: remocao restrita ao proprio usuario', async () => {
+  const s = setup();
+
+  const response = await s.call(
+    'delete',
+    '/mural/:id/interesse',
+    { usuario_id: 999, post_id: 999 },
+    'Bearer valid',
+    '25'
+  );
+
+  assert.equal(response.code, 200);
+  assert.equal(response.data.interesse, false);
+  assert.equal(response.data.post_id, 25);
+
+  const query = s.queries.at(-1);
+
+  assert.match(query.sql, /DELETE FROM mural_interesses/);
+  assert.match(query.sql, /usuario_id = \$1/);
+  assert.match(query.sql, /post_id = \$2/);
+  assert.equal(query.values[0], 1);
+  assert.equal(query.values[1], 25);
+});
+
+test('Interesses: revogacao impede acesso com token antigo', async () => {
+  const s = setup();
+
+  assert.equal(
+    (await s.call('get', '/mural/interesses')).code,
+    200
+  );
+
+  s.setUser({
+    id: 1,
+    nivel_acesso: 'MEMBRO',
+    status_conta: 'BLOQUEADO'
+  });
+
+  for (const [method, url] of rotasInteresses) {
+    assert.equal((await s.call(method, url)).code, 403);
+  }
+});
+
+test('Interesses: falha na validacao da sessao impede acesso', async () => {
+  const s = setup();
+
+  s.failDB();
+
+  for (const [method, url] of rotasInteresses) {
+    assert.equal((await s.call(method, url)).code, 500);
+  }
+});
