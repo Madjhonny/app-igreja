@@ -8,6 +8,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { Image as ExpoImage, type ImageLoadEventData } from 'expo-image';
 import { imageAspectRatio, optimizedMuralUrl } from '@/services/mural-image';
 import { filtrarPublicacoes, podeFiltrarCongregacao, type FiltroMural } from '@/services/mural-feed';
+import { indiceValido, limitarIndice, indicePorDeslocamento } from '@/services/mural-navigation';
 
 // Altura da janela usada apenas como valor inicial; no fullscreen a altura real é medida via onLayout
 const { height } = Dimensions.get('window');
@@ -418,7 +419,7 @@ export default function TelaEventos() {
   };
 
   const abrirFullscreenNoPost = (index: number) => {
-    if (!Number.isInteger(index) || index < 0 || index >= postsVisiveis.length) return;
+    if (!indiceValido(index, postsVisiveis.length)) return;
     indiceAtualRef.current = index;
     setIndiceInicial(index);
     setModoFullscreen(true);
@@ -566,7 +567,10 @@ export default function TelaEventos() {
         onLayout={(e) => {
           // Mede a área real disponível: cada slide, o snap e o getItemLayout usam exatamente essa altura
           const alturaMedida = PixelRatio.roundToNearestPixel(e.nativeEvent.layout.height);
-          if (alturaMedida > 0 && Math.abs(alturaMedida - alturaPagina) > 0.5) setAlturaPagina(alturaMedida);
+          if (alturaMedida > 0 && Math.abs(alturaMedida - alturaPagina) > 0.5) {
+            setIndiceInicial(limitarIndice(indiceAtualRef.current, postsVisiveis.length));
+            setAlturaPagina(alturaMedida);
+          }
           if (alturaMedida > 0 && !fullscreenMedido) setFullscreenMedido(true);
         }}
       >
@@ -587,7 +591,7 @@ export default function TelaEventos() {
             disableIntervalMomentum
             bounces={false}
             overScrollMode="never"
-            initialScrollIndex={Math.min(indiceInicial, Math.max(postsVisiveis.length - 1, 0))}
+            initialScrollIndex={limitarIndice(indiceInicial, postsVisiveis.length)}
             getItemLayout={(data, index) => ({ length: alturaPagina, offset: alturaPagina * index, index })}
             initialNumToRender={1}
             maxToRenderPerBatch={2}
@@ -595,7 +599,7 @@ export default function TelaEventos() {
             onMomentumScrollEnd={(e) => {
               // Registra o slide atual e garante que a lista nunca fique parada entre duas publicações
               const offsetY = e.nativeEvent.contentOffset.y;
-              const indice = Math.max(0, Math.min(Math.round(offsetY / alturaPagina), postsVisiveis.length - 1));
+              const indice = indicePorDeslocamento(offsetY, alturaPagina, postsVisiveis.length);
               indiceAtualRef.current = indice;
               const alvo = indice * alturaPagina;
               if (Math.abs(offsetY - alvo) > 1) {
