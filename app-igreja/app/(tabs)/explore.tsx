@@ -7,6 +7,7 @@ import { router, useFocusEffect, useNavigation } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Image as ExpoImage, type ImageLoadEventData } from 'expo-image';
 import { imageAspectRatio, optimizedMuralUrl } from '@/services/mural-image';
+import { filtrarPublicacoes, podeFiltrarCongregacao, type FiltroMural } from '@/services/mural-feed';
 
 // Altura da janela usada apenas como valor inicial; no fullscreen a altura real é medida via onLayout
 const { height } = Dimensions.get('window');
@@ -55,6 +56,7 @@ export default function TelaEventos() {
   
   const [usuarioLogado, setUsuarioLogado] = useSessionUser();
   const [convidado, setConvidado] = useState(false);
+  const [filtro, setFiltro] = useState<FiltroMural>('todos');
 
   // Controle do modo Fullscreen e navegação por slides
   const [modoFullscreen, setModoFullscreen] = useState(false);
@@ -170,6 +172,41 @@ export default function TelaEventos() {
   }, [buscarPosts]);
 
   const podeInteragir = !convidado && canInteract(usuarioLogado);
+
+  const congregacaoId = usuarioLogado?.congregacao_id;
+  const filtroDisponivel = podeFiltrarCongregacao(congregacaoId, convidado);
+  const filtroAtivo = filtroDisponivel ? filtro : 'todos';
+
+  const postsVisiveis = React.useMemo(
+    () => filtrarPublicacoes(posts, filtroAtivo, congregacaoId, convidado),
+    [posts, filtroAtivo, congregacaoId, convidado]
+  );
+
+  // Reinicia a selecao quando o contexto da sessao muda.
+  const contextoFiltro = JSON.stringify([
+    usuarioLogado?.id ?? null,
+    congregacaoId ?? null,
+    convidado
+  ]);
+
+  const [contextoAnterior, setContextoAnterior] = useState(contextoFiltro);
+
+  if (contextoAnterior !== contextoFiltro) {
+    setContextoAnterior(contextoFiltro);
+    setFiltro('todos');
+    setModoFullscreen(false);
+    setIndiceInicial(0);
+  } else if (modoFullscreen && postsVisiveis.length === 0) {
+    setModoFullscreen(false);
+    setIndiceInicial(0);
+  }
+
+  const alterarFiltro = (novoFiltro: FiltroMural) => {
+    setFiltro(novoFiltro);
+    setModoFullscreen(false);
+    setIndiceInicial(0);
+    indiceAtualRef.current = 0;
+  };
 
   const curtirPost = async (postId: number) => {
     if (!podeInteragir) return;
@@ -360,8 +397,8 @@ export default function TelaEventos() {
           try {
             const resp = await authenticatedFetch(`/mural/${postId}`, { method: 'DELETE' });
             if (resp.ok) {
-              setPosts(posts.filter(p => p.id !== postId));
-              if (posts.length <= 1) setModoFullscreen(false);
+              setPosts(atuais => atuais.filter(p => p.id !== postId));
+              setModoFullscreen(false);
             } else {
               mostrarDialogo("Erro", "Você não tem permissão para excluir este post.");
             }
@@ -381,6 +418,7 @@ export default function TelaEventos() {
   };
 
   const abrirFullscreenNoPost = (index: number) => {
+    if (!Number.isInteger(index) || index < 0 || index >= postsVisiveis.length) return;
     indiceAtualRef.current = index;
     setIndiceInicial(index);
     setModoFullscreen(true);
@@ -521,7 +559,7 @@ export default function TelaEventos() {
   };
 
   // Se estiver em modo fullscreen, substitui a tela por uma camada independente acima de tudo
-  if (modoFullscreen) {
+  if (modoFullscreen && postsVisiveis.length > 0) {
     return (
       <View
         style={styles.fullscreenWrapper}
@@ -537,7 +575,7 @@ export default function TelaEventos() {
           <FlatList
             key={`fullscreen-${alturaPagina}`}
             ref={flatListRef}
-            data={posts}
+            data={postsVisiveis}
             extraData={postsCurtidas}
             keyExtractor={(item) => item.id.toString()}
             renderItem={renderPostFullscreen}
@@ -549,7 +587,7 @@ export default function TelaEventos() {
             disableIntervalMomentum
             bounces={false}
             overScrollMode="never"
-            initialScrollIndex={Math.min(indiceInicial, Math.max(posts.length - 1, 0))}
+            initialScrollIndex={Math.min(indiceInicial, Math.max(postsVisiveis.length - 1, 0))}
             getItemLayout={(data, index) => ({ length: alturaPagina, offset: alturaPagina * index, index })}
             initialNumToRender={1}
             maxToRenderPerBatch={2}
@@ -557,7 +595,7 @@ export default function TelaEventos() {
             onMomentumScrollEnd={(e) => {
               // Registra o slide atual e garante que a lista nunca fique parada entre duas publicações
               const offsetY = e.nativeEvent.contentOffset.y;
-              const indice = Math.max(0, Math.min(Math.round(offsetY / alturaPagina), posts.length - 1));
+              const indice = Math.max(0, Math.min(Math.round(offsetY / alturaPagina), postsVisiveis.length - 1));
               indiceAtualRef.current = indice;
               const alvo = indice * alturaPagina;
               if (Math.abs(offsetY - alvo) > 1) {
@@ -704,19 +742,55 @@ export default function TelaEventos() {
         />
       </View>
 
-      {usuarioLogado && !convidado && canManage(usuarioLogado) && (
-        <View style={styles.feedToolbar}>
+      <View style={styles.filterBar}>
+        <TouchableOpacity
+          style={[
+            styles.filterChip,
+            filtroAtivo === 'todos' && styles.filterChipActive
+          ]}
+          onPress={() => alterarFiltro('todos')}
+          accessibilityRole="button"
+          accessibilityState={{ selected: filtroAtivo === 'todos' }}
+        >
+          <Text style={[
+            styles.filterText,
+            filtroAtivo === 'todos' && styles.filterTextActive
+          ]}>Todos</Text>
+        </TouchableOpacity>
+
+        {filtroDisponivel && (
+          <TouchableOpacity
+            style={[
+              styles.filterChip,
+              filtroAtivo === 'minha' && styles.filterChipActive
+            ]}
+            onPress={() => alterarFiltro('minha')}
+            accessibilityRole="button"
+            accessibilityState={{ selected: filtroAtivo === 'minha' }}
+          >
+            <Ionicons
+              name="people-outline"
+              size={17}
+              color={filtroAtivo === 'minha' ? '#FFFFFF' : '#2A4B4C'}
+            />
+            <Text style={[
+              styles.filterText,
+              filtroAtivo === 'minha' && styles.filterTextActive
+            ]}>Minha congregação</Text>
+          </TouchableOpacity>
+        )}
+              {usuarioLogado && !convidado && canManage(usuarioLogado) && (
           <TouchableOpacity
             onPress={() => router.push('/criar-post' as any)}
             style={styles.newPostBtn}
             accessibilityRole="button"
             accessibilityLabel="Nova publicação"
+            accessibilityHint="Abre a tela de criação de publicação"
           >
-            <Ionicons name="add" size={22} color="#fff" />
-            <Text style={styles.newPostText}>Nova publicação</Text>
+            <Ionicons name="add" size={26} color="#FFFFFF" />
           </TouchableOpacity>
-        </View>
-      )}
+        )}
+      </View>
 
       {carregando ? (
         <ActivityIndicator size="large" color="#2A4B4C" style={{ marginTop: 50 }} />
@@ -728,16 +802,31 @@ export default function TelaEventos() {
             <Text style={styles.retryText}>Tentar novamente</Text>
           </TouchableOpacity>
         </View>
-      ) : posts.length === 0 ? (
-        <View style={styles.emptyBox}>
-          <Ionicons name="newspaper-outline" size={50} color="#C4C2B7" />
-          <Text style={styles.emptyText}>Nenhum evento publicado no momento.</Text>
-        </View>
       ) : (
         <FlatList
-          data={posts}
+          data={postsVisiveis}
           keyExtractor={(item) => item.id.toString()}
           renderItem={renderPostFeed}
+          ListEmptyComponent={
+            <View style={styles.emptyBox}>
+              <Ionicons name="newspaper-outline" size={50} color="#C4C2B7" />
+              <Text style={styles.emptyText}>
+                {filtroAtivo === 'minha'
+                  ? 'Nenhuma publicação da sua congregação no momento.'
+                  : 'Nenhum evento publicado no momento.'}
+              </Text>
+              <TouchableOpacity
+                style={styles.retryButton}
+                onPress={onRefresh}
+                disabled={refreshing}
+                accessibilityRole="button"
+              >
+                <Text style={styles.retryText}>
+                  {refreshing ? 'Atualizando...' : 'Atualizar publicações'}
+                </Text>
+              </TouchableOpacity>
+            </View>
+          }
           initialNumToRender={3}
           maxToRenderPerBatch={3}
           windowSize={5}
@@ -901,29 +990,52 @@ const styles = StyleSheet.create({
     opacity: 0.8,
   },
 
-  feedToolbar: {
+  filterBar: {
     width: '100%',
     maxWidth: 670,
     alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
     paddingHorizontal: 15,
     paddingTop: 14,
+    gap: 8,
+  },
+
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 40,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 24,
+    backgroundColor: '#E2EAE9',
+    gap: 6,
+  },
+
+  filterChipActive: {
+    backgroundColor: '#2A4B4C',
+  },
+
+  filterText: {
+    color: '#2A4B4C',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
+  filterTextActive: {
+    color: '#FFFFFF',
   },
 
   newPostBtn: {
     backgroundColor: '#2A4B4C',
-    flexDirection: 'row',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 44,
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    gap: 8,
-  },
-
-  newPostText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '700',
+    marginLeft: 'auto',
   },
 
   bannerNovosPosts: { backgroundColor: '#2A4B4C', paddingVertical: 10, paddingHorizontal: 15, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', elevation: 3 },
