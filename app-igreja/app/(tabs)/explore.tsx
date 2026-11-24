@@ -37,7 +37,7 @@ const ImagemMural = React.memo(function ImagemMural({ postId, uri, fullscreen = 
   const imagem = <ExpoImage
     source={{ uri: fonte }}
     style={fullscreen ? styles.fullscreenImage : styles.mediaContentFeed}
-    contentFit={fullscreen ? 'contain' : 'cover'}
+    contentFit="contain"
     cachePolicy={otimizada !== uri ? 'memory-disk' : 'none'}
     recyclingKey={fonte}
     onLoad={onLoad}
@@ -688,17 +688,35 @@ export default function TelaEventos() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        {/* Espaços simétricos preservam o título centralizado com ou sem botão de criar post. */}
-        <View style={styles.headerSideSlot} />
-        <Text style={styles.headerTitle}>Eventos</Text>
-        {usuarioLogado && canManage(usuarioLogado) ? (
-          <TouchableOpacity onPress={() => router.push('/criar-post' as any)} style={styles.newPostBtn}>
-            <Ionicons name="add" size={24} color="#fff" />
-          </TouchableOpacity>
-        ) : (
-          <View style={styles.headerSideSlot} />
-        )}
+        <View style={styles.headerContent}>
+          <Text accessibilityRole="header" style={styles.headerTitle}>
+            Eventos
+          </Text>
+          <Text style={styles.headerSubtitle}>
+            Fique por dentro das novidades
+          </Text>
+        </View>
+        <Ionicons
+          name="newspaper-outline"
+          size={38}
+          color="#C4C2B7"
+          style={styles.headerIcon}
+        />
       </View>
+
+      {usuarioLogado && !convidado && canManage(usuarioLogado) && (
+        <View style={styles.feedToolbar}>
+          <TouchableOpacity
+            onPress={() => router.push('/criar-post' as any)}
+            style={styles.newPostBtn}
+            accessibilityRole="button"
+            accessibilityLabel="Nova publicação"
+          >
+            <Ionicons name="add" size={22} color="#fff" />
+            <Text style={styles.newPostText}>Nova publicação</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       {carregando ? (
         <ActivityIndicator size="large" color="#2A4B4C" style={{ marginTop: 50 }} />
@@ -850,10 +868,63 @@ export default function TelaEventos() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#F7F5EC' },
-  header: { backgroundColor: '#2A4B4C', paddingTop: 50, paddingBottom: 15, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20 },
-  headerTitle: { color: '#F7F5EC', fontSize: 20, fontWeight: 'bold', flex: 1, textAlign: 'center' },
-  headerSideSlot: { width: 40, height: 40 },
-  newPostBtn: { backgroundColor: '#3A6364', padding: 8, borderRadius: 20, width: 40, height: 40 },
+  header: {
+    backgroundColor: '#2A4B4C',
+    paddingTop: 48,
+    paddingBottom: 20,
+    paddingHorizontal: 22,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+
+  headerContent: {
+    flex: 1,
+  },
+
+  headerTitle: {
+    color: '#F7F5EC',
+    fontSize: 28,
+    fontWeight: '700',
+    letterSpacing: 0.3,
+  },
+
+  headerSubtitle: {
+    color: '#E2EAE9',
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 4,
+  },
+
+  headerIcon: {
+    opacity: 0.8,
+  },
+
+  feedToolbar: {
+    width: '100%',
+    maxWidth: 670,
+    alignSelf: 'center',
+    paddingHorizontal: 15,
+    paddingTop: 14,
+  },
+
+  newPostBtn: {
+    backgroundColor: '#2A4B4C',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+
+  newPostText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
 
   bannerNovosPosts: { backgroundColor: '#2A4B4C', paddingVertical: 10, paddingHorizontal: 15, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', elevation: 3 },
   bannerNovosPostsText: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
@@ -864,7 +935,7 @@ const styles = StyleSheet.create({
   retryText: { color: '#fff', fontWeight: 'bold' },
 
   // Estilos Feed Normal
-  postCard: { backgroundColor: '#fff', borderRadius: 12, marginBottom: 20, overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5, elevation: 2 },
+  postCard: { backgroundColor: '#fff', borderRadius: 16, marginBottom: 16, borderWidth: 1, borderColor: '#E2EAE9', overflow: 'hidden', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 5, elevation: 2 },
   // No navegador o feed deve ter largura de leitura, sem esticar fotos pela tela inteira.
   // Em celulares preservamos o layout anterior.
   postCardWeb: { width: '100%', maxWidth: 640, alignSelf: 'center' },
@@ -887,7 +958,14 @@ const styles = StyleSheet.create({
   videoPlaceholder: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#111', width: '100%' },
   videoText: { color: '#fff', marginTop: 6, fontSize: 13 },
 
-  postActionsFooter: { flexDirection: 'row', borderTopWidth: 1, borderTopColor: '#F0F0F0', paddingVertical: 10, paddingHorizontal: 15 },
+  postActionsFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#E2EAE9',
+    paddingVertical: 12,
+    paddingHorizontal: 15,
+  },
   actionButton: { flexDirection: 'row', alignItems: 'center', marginRight: 25 },
   actionCount: { fontSize: 14, color: '#444', marginLeft: 6 },
 
