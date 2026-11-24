@@ -101,6 +101,11 @@ const PaginaMes = React.memo(function PaginaMes({
   const topo = (alturaLinha - tamanho) / 2;
 
   const dias = gerarDiasDoMes(ano, mes);
+  const hoje = new Date();
+  const diaHoje =
+    hoje.getFullYear() === ano && hoje.getMonth() === mes
+      ? hoje.getDate()
+      : null;
 
   while (dias.length % 7 !== 0) {
     dias.push(null);
@@ -184,6 +189,23 @@ const PaginaMes = React.memo(function PaginaMes({
                   ]}
                 >
                   {item ? (
+                    <>
+                    {item.dia === diaHoje && (
+                      <View
+                        pointerEvents="none"
+                        style={[
+                          styles.todayOutline,
+                          {
+                            width: tamanho,
+                            height: tamanho,
+                            borderRadius: tamanho / 2,
+                            borderColor: marcados[c]
+                              ? cores.bege
+                              : cores.verde,
+                          },
+                        ]}
+                      />
+                    )}
                     <Text
                       style={[
                         styles.dayText,
@@ -193,8 +215,7 @@ const PaginaMes = React.memo(function PaginaMes({
                       ]}
                     >
                       {item.dia}
-                    </Text>
-                  ) : null}
+                    </Text></>) : null}
                 </View>
               ))}
             </View>
@@ -218,6 +239,9 @@ export default function TelaAgenda() {
   });
   const mesAtual = indiceAtual % 12;
   const anoAtual = Math.floor(indiceAtual / 12);
+  const semanasDoMes = Math.ceil(
+    gerarDiasDoMes(anoAtual, mesAtual).length / 7
+  );
   const [resultadoMes, setResultadoMes] = useState<{ month: number; events: any[] } | null>(null);
   const eventosDoMes = monthEvents(resultadoMes, indiceAtual, EVENTOS_VAZIOS);
   const [mesDaConsulta, setMesDaConsulta] = useState<number | null>(null);
@@ -826,9 +850,20 @@ export default function TelaAgenda() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>
-          Agenda
-        </Text>
+        <View style={styles.headerContent}>
+          <Text accessibilityRole="header" style={styles.headerTitle}>
+            Agenda
+          </Text>
+          <Text style={styles.headerSubtitle}>
+            Acompanhe a programação da igreja
+          </Text>
+        </View>
+        <Ionicons
+          name="calendar-outline"
+          size={38}
+          color={cores.neutro}
+          style={styles.headerIcon}
+        />
       </View>
 
       {avisoAgenda ? (
@@ -1053,8 +1088,7 @@ export default function TelaAgenda() {
 
               <View
                 style={
-                  [styles.gradeJanela, { height: alturaLinhaCalendario * LINHAS_DA_GRADE }]
-                }
+                  [styles.gradeJanela, { height: alturaLinhaCalendario * semanasDoMes }]}
                 onLayout={e => {
                   const l =
                     e.nativeEvent.layout.width;
@@ -1116,6 +1150,17 @@ export default function TelaAgenda() {
                   )}
                 </Animated.View>
               </View>
+              <View style={styles.calendarLegend}>
+                <View style={styles.legendItem}>
+                  <View style={styles.legendToday} />
+                  <Text style={styles.legendText}>Hoje</Text>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={styles.legendEvent} />
+                  <Text style={styles.legendText}>Com evento</Text>
+                </View>
+              </View>
+
             </View>
 
             {/* NOVO EVENTO:
@@ -1277,6 +1322,18 @@ export default function TelaAgenda() {
                       evento.data_fim
                     );
 
+                  const partesData = dataInicioFormatada.split('/');
+                  const diaEvento = partesData[0] || '--';
+                  const mesEvento = [
+                    'JAN', 'FEV', 'MAR', 'ABR',
+                    'MAI', 'JUN', 'JUL', 'AGO',
+                    'SET', 'OUT', 'NOV', 'DEZ',
+                  ][Number(partesData[1]) - 1] || '';
+                  const eventoMultidias = Boolean(
+                    dataFimFormatada &&
+                    dataFimFormatada !== dataInicioFormatada
+                  );
+
                   const periodoExibicao =
                     dataFimFormatada &&
                     dataFimFormatada !==
@@ -1307,13 +1364,12 @@ export default function TelaAgenda() {
                             styles.eventIconBox
                           }
                         >
-                          <Ionicons
-                            name="calendar"
-                            size={20}
-                            color={
-                              cores.verde
-                            }
-                          />
+                          <Text style={styles.eventDay}>
+                            {diaEvento}
+                          </Text>
+                          <Text style={styles.eventMonth}>
+                            {mesEvento}
+                          </Text>
                         </View>
 
                         <View
@@ -1331,6 +1387,11 @@ export default function TelaAgenda() {
                             }
                           </Text>
 
+                          {eventoMultidias && (
+                            <Text style={styles.eventPeriod}>
+                              {periodoExibicao}
+                            </Text>
+                          )}
                           <View
                             style={
                               styles.eventMetaRow
@@ -1352,12 +1413,7 @@ export default function TelaAgenda() {
                                 styles.eventCardDate
                               }
                             >
-                              {
-                                periodoExibicao
-                              }{' '}
-                              às{' '}
-                              {evento.horario ||
-                                '00:00'}
+                              {evento.horario || 'Horário não informado'}
                             </Text>
                           </View>
 
@@ -2030,16 +2086,35 @@ const styles = StyleSheet.create({
 
   header: {
     backgroundColor: cores.verde,
-    paddingTop: 52,
-    paddingBottom: 26,
+    paddingTop: 48,
+    paddingBottom: 20,
+    paddingHorizontal: 22,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+
+  headerContent: {
+    flex: 1,
+  },
+
+  headerIcon: {
+    opacity: 0.8,
   },
 
   headerTitle: {
     color: cores.bege,
-    fontSize: 20,
+    fontSize: 28,
     fontWeight: '700',
     letterSpacing: 0.3,
+  },
+
+  headerSubtitle: {
+    color: cores.suave,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 4,
   },
 
   feedbackBar: {
@@ -2068,7 +2143,7 @@ const styles = StyleSheet.create({
 
   scrollContent: {
     paddingHorizontal: 20,
-    paddingTop: 24,
+    paddingTop: 16,
     paddingBottom: 80,
   },
 
@@ -2124,7 +2199,7 @@ const styles = StyleSheet.create({
   },
 
   filtroContainer: {
-    marginBottom: 18,
+    marginBottom: 14,
   },
 
   filtroLabel: {
@@ -2239,9 +2314,9 @@ const styles = StyleSheet.create({
 
   calendarCard: {
     backgroundColor: cores.branco,
-    padding: 18,
+    padding: 14,
     borderRadius: 20,
-    marginBottom: 20,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: cores.suave,
     shadowColor: cores.verde,
@@ -2273,7 +2348,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 10,
   },
 
   monthTitle: {
@@ -2344,6 +2419,48 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
+  todayOutline: {
+    position: 'absolute',
+    borderWidth: 2,
+  },
+
+  calendarLegend: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 18,
+    paddingTop: 12,
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: cores.suave,
+  },
+
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+
+  legendToday: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: cores.verde,
+  },
+
+  legendEvent: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: cores.verde,
+  },
+
+  legendText: {
+    fontSize: 12,
+    color: cores.verde,
+  },
+
   dayText: {
     fontSize: 14,
     color: cores.verde,
@@ -2357,11 +2474,11 @@ const styles = StyleSheet.create({
   newButton: {
     backgroundColor: cores.verde,
     flexDirection: 'row',
-    height: 52,
+    height: 48,
     borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 28,
+    marginBottom: 16,
     shadowColor: cores.verde,
     shadowOpacity: 0.25,
     shadowRadius: 10,
@@ -2420,7 +2537,7 @@ const styles = StyleSheet.create({
 
   eventCard: {
     backgroundColor: cores.branco,
-    padding: 16,
+    padding: 12,
     borderRadius: 16,
     marginBottom: 12,
     flexDirection: 'row',
@@ -2453,13 +2570,34 @@ const styles = StyleSheet.create({
   },
 
   eventIconBox: {
-    width: 42,
-    height: 42,
+    width: 58,
+    minHeight: 64,
+    paddingVertical: 8,
     borderRadius: 12,
     backgroundColor: cores.suave,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 14,
+    marginRight: 12,
+  },
+
+  eventDay: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: cores.verde,
+    lineHeight: 28,
+  },
+
+  eventMonth: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: cores.verde,
+    letterSpacing: 0.8,
+  },
+
+  eventPeriod: {
+    fontSize: 12,
+    color: cores.verdeTexto,
+    marginBottom: 3,
   },
 
   eventCardTexts: {
