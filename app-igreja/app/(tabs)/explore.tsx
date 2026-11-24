@@ -58,6 +58,7 @@ export default function TelaEventos() {
   const [usuarioLogado, setUsuarioLogado] = useSessionUser();
   const [convidado, setConvidado] = useState(false);
   const [filtro, setFiltro] = useState<FiltroMural>('todos');
+  const [menuPostId, setMenuPostId] = useState<number | null>(null);
 
   // Controle do modo Fullscreen e navegação por slides
   const [modoFullscreen, setModoFullscreen] = useState(false);
@@ -194,6 +195,7 @@ export default function TelaEventos() {
 
   if (contextoAnterior !== contextoFiltro) {
     setContextoAnterior(contextoFiltro);
+    setMenuPostId(null);
     setFiltro('todos');
     setModoFullscreen(false);
     setIndiceInicial(0);
@@ -203,6 +205,7 @@ export default function TelaEventos() {
   }
 
   const alterarFiltro = (novoFiltro: FiltroMural) => {
+    setMenuPostId(null);
     setFiltro(novoFiltro);
     setModoFullscreen(false);
     setIndiceInicial(0);
@@ -412,13 +415,17 @@ export default function TelaEventos() {
   };
 
   const podeExcluirPost = (post: any) => {
-    if (!usuarioLogado || !canManage(usuarioLogado)) return false;
+    if (convidado || !usuarioLogado || !canManage(usuarioLogado)) return false;
     if (usuarioLogado.nivel_acesso === 'MASTER') return true;
     if (usuarioLogado.nivel_acesso === 'ADMIN' && post.congregacao_id === usuarioLogado.congregacao_id) return true;
     return false;
   };
 
+  const postMenu = postsVisiveis.find(post => post.id === menuPostId);
+  const menuDisponivel = !!postMenu && podeExcluirPost(postMenu);
+
   const abrirFullscreenNoPost = (index: number) => {
+    setMenuPostId(null);
     if (!indiceValido(index, postsVisiveis.length)) return;
     indiceAtualRef.current = index;
     setIndiceInicial(index);
@@ -475,15 +482,16 @@ export default function TelaEventos() {
 
           {podeExcluirPost(post) && (
             <TouchableOpacity
-              onPress={() => excluirPost(post.id)}
+              onPress={() => setMenuPostId(post.id)}
               style={styles.postIconButton}
               accessibilityRole="button"
-              accessibilityLabel="Excluir publicação"
+              accessibilityLabel="Opções da publicação"
+              accessibilityHint="Abre o menu administrativo"
             >
               <Ionicons
-                name="trash-outline"
-                size={21}
-                color="#B83E43"
+                name="ellipsis-horizontal"
+                size={24}
+                color="#2A4B4C"
               />
             </TouchableOpacity>
           )}
@@ -939,6 +947,71 @@ export default function TelaEventos() {
         />
       )}
 
+      <Modal
+        visible={menuDisponivel}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setMenuPostId(null)}
+      >
+        <View style={styles.postMenuOverlay}>
+          <TouchableOpacity
+            style={StyleSheet.absoluteFill}
+            activeOpacity={1}
+            onPress={() => setMenuPostId(null)}
+            accessibilityRole="button"
+            accessibilityLabel="Fechar opções"
+          />
+
+          <View style={styles.postMenuPanel}>
+            <View style={styles.postMenuHandle} />
+
+            <Text style={styles.postMenuTitle}>
+              Opções da publicação
+            </Text>
+
+            <Text
+              style={styles.postMenuSubtitle}
+              numberOfLines={2}
+            >
+              {postMenu?.titulo}
+            </Text>
+
+            <TouchableOpacity
+              style={styles.postMenuDelete}
+              accessibilityRole="button"
+              onPress={() => {
+                if (!postMenu || !podeExcluirPost(postMenu)) {
+                  setMenuPostId(null);
+                  return;
+                }
+
+                setMenuPostId(null);
+                void excluirPost(postMenu.id);
+              }}
+            >
+              <Ionicons
+                name="trash-outline"
+                size={23}
+                color="#B83E43"
+              />
+              <Text style={styles.postMenuDeleteText}>
+                Excluir publicação
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.postMenuCancel}
+              onPress={() => setMenuPostId(null)}
+              accessibilityRole="button"
+            >
+              <Text style={styles.postMenuCancelText}>
+                Cancelar
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* MODAL DE COMENTÁRIOS NO FEED NORMAL */}
       <Modal visible={modalComentariosVisivel} animationType="slide" transparent={true} onRequestClose={fecharComentarios}>
         <View style={styles.modalOverlay}>
@@ -1206,6 +1279,76 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#666',
     fontWeight: '500',
+  },
+
+  postMenuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+  },
+
+  postMenuPanel: {
+    width: '100%',
+    maxWidth: 640,
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 22,
+    paddingBottom: 30,
+  },
+
+  postMenuHandle: {
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#C4C2B7',
+    alignSelf: 'center',
+    marginBottom: 20,
+  },
+
+  postMenuTitle: {
+    color: '#2A4B4C',
+    fontSize: 18,
+    fontWeight: '700',
+  },
+
+  postMenuSubtitle: {
+    color: '#666',
+    fontSize: 13,
+    marginTop: 5,
+    marginBottom: 18,
+  },
+
+  postMenuDelete: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    minHeight: 54,
+    paddingHorizontal: 15,
+    backgroundColor: '#FFF1F1',
+    borderRadius: 12,
+  },
+
+  postMenuDeleteText: {
+    color: '#B83E43',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+
+  postMenuCancel: {
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#E2EAE9',
+    borderRadius: 12,
+    marginTop: 12,
+  },
+
+  postMenuCancelText: {
+    color: '#2A4B4C',
+    fontSize: 14,
+    fontWeight: '600',
   },
 
   // Estilos do Modo Fullscreen
