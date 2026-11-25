@@ -8,6 +8,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
+const { validarBancoLocal } = require('../scripts/banco-local-de-teste');
 
 const dbUrl = process.env.INTERESSES_TEST_DATABASE_URL;
 
@@ -15,14 +16,7 @@ test('HTTP + PostgreSQL real: interesses privados', {
     skip: !dbUrl,
     timeout: 90000
 }, async t => {
-    const url = new URL(dbUrl);
-
-    assert.ok(
-        ['localhost', '127.0.0.1'].includes(url.hostname) &&
-        url.pathname === '/agenda_interesses_test' &&
-        !url.search && !url.hash,
-        'Somente banco local isolado permitido.'
-    );
+    const url = validarBancoLocal(dbUrl, 'agenda_interesses_test');
 
     const schema = 'interesses_http_' +
         crypto.randomBytes(8).toString('hex');

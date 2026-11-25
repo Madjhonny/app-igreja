@@ -4,6 +4,7 @@ const { readFile } = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { Pool } = require('pg');
+const { validarBancoLocal } = require('../scripts/banco-local-de-teste');
 
 const dbUrl = process.env.INTERESSES_TEST_DATABASE_URL;
 
@@ -11,13 +12,7 @@ test('PostgreSQL real: integridade dos interesses', {
     skip: !dbUrl,
     timeout: 60000
 }, async t => {
-    const url = new URL(dbUrl);
-
-    assert.ok(
-        ['localhost', '127.0.0.1'].includes(url.hostname) &&
-        url.pathname === '/agenda_interesses_test',
-        'Somente banco local isolado permitido.'
-    );
+    validarBancoLocal(dbUrl, 'agenda_interesses_test');
 
     const schema = 'interesses_' + crypto.randomBytes(8).toString('hex');
 

@@ -1,10 +1,14 @@
 import { createServer } from 'node:http';
+import { Buffer } from 'node:buffer';
 import { readFile } from 'node:fs/promises';
 import { resolve, extname, sep } from 'node:path';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { criarMonitorJavaScript } from './check-web-hidratacao.mjs';
 
 const root = resolve(process.argv[2]);
+const diretorioArtefatos = resolve(process.argv[3] ?? 'dist/artefatos-teste/resiliencia');
+const monitorJavaScript = criarMonitorJavaScript();
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.woff2': 'font/woff2', '.ttf': 'font/ttf' };
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://localhost').pathname;
@@ -16,10 +20,12 @@ const server = createServer(async (req, res) => {
   } catch { res.writeHead(404).end(); }
 });
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-let browser;
+let browser, erroCenario;
 try {
   browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE });
-  const page = await browser.newPage({ serviceWorkers: 'block', viewport: { width: 390, height: 844 } });
+  const context = await browser.newContext({ serviceWorkers: 'block', viewport: { width: 390, height: 844 } });
+  monitorJavaScript.acompanhar(context);
+  const page = await context.newPage();
   let calls = 0, unavailable = true;
   const reports = [];
   await page.route('http://localhost:3000/telemetria', async route => {
@@ -102,7 +108,16 @@ try {
   assert.equal(await page.getByText('Evento teste 2', { exact: true }).count(), 0);
   assert.equal(agendaCalls, 3);
   console.log('OK: navegação rápida da agenda sem dados de mês anterior.');
+} catch (erro) {
+  erroCenario = erro;
 } finally {
   await browser?.close();
   server.close();
 }
+try {
+  await monitorJavaScript.verificar(diretorioArtefatos);
+} catch (erro) {
+  if (erroCenario) throw new AggregateError([erroCenario, erro], 'Falhas de cenário e de JavaScript na resiliência web');
+  throw erro;
+}
+if (erroCenario) throw erroCenario;

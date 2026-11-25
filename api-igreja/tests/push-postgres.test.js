@@ -4,19 +4,17 @@ const { readFile, mkdtemp, writeFile, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const crypto = require('node:crypto');
 const path = require('node:path');
-const { Pool } = require('pg');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { performance } = require('node:perf_hooks');
 const { createPushNotifications } = require('../services/push-notifications');
+const { abrirSchemaDeTeste } = require('../scripts/banco-local-de-teste');
 
 const dbUrl = process.env.PUSH_TEST_DATABASE_URL;
 test('PostgreSQL real: migração, fila transacional, escopo, revogação e recibo', { skip: !dbUrl }, async () => {
-  const url = new URL(dbUrl);
-  assert.ok(['localhost', '127.0.0.1'].includes(url.hostname) && url.pathname === '/agenda_push_test', 'Somente banco de teste local isolado.');
-  const pool = new Pool({ connectionString: dbUrl });
+  const { pool, fechar } = await abrirSchemaDeTeste(dbUrl, 'agenda_push_test', 'push_fila');
   try {
     for (const filename of ['001_initial_schema.sql', '003_password_recovery.sql', '20261120_push_notifications.sql']) {
       await pool.query(await readFile(path.join(__dirname, '../migrations', filename), 'utf8'));
@@ -49,13 +47,11 @@ test('PostgreSQL real: migração, fila transacional, escopo, revogação e reci
     assert.equal((await pool.query('SELECT * FROM push_devices WHERE usuario_id=$1', [one.id])).rowCount, 0);
     await service.revoke({ key: '3'.repeat(64) });
     assert.equal((await pool.query('SELECT * FROM push_devices WHERE usuario_id=$1', [other.id])).rowCount, 0);
-  } finally { await pool.end(); }
+  } finally { await fechar(); }
 });
 
 test('HTTP + PostgreSQL real: login, escopo, concorrência e revogação de sessão', { skip: !dbUrl, timeout: 90000 }, async t => {
-  const url = new URL(dbUrl);
-  assert.ok(['localhost', '127.0.0.1'].includes(url.hostname) && url.pathname === '/agenda_push_test');
-  const pool = new Pool({ connectionString: dbUrl });
+  const { pool, ambiente, fechar } = await abrirSchemaDeTeste(dbUrl, 'agenda_push_test', 'push_http');
   let child;
   let mailDir;
   try {
@@ -88,10 +84,8 @@ test('HTTP + PostgreSQL real: login, escopo, concorrência e revogação de sess
       };
       require(process.argv[1]);
     `, path.join(__dirname, '../server.js')], {
-      cwd: __dirname,
-      env: { PORT: '0', DB_HOST: url.hostname, DB_PORT: url.port || '5432',
-        DB_NAME: 'agenda_push_test', DB_USER: decodeURIComponent(url.username),
-        DB_PASSWORD: decodeURIComponent(url.password), DB_SSL: 'false',
+      cwd: mailDir,
+      env: { ...ambiente, PORT: '0',
         JWT_SECRET: 'isolated-http-test-only', PUSH_NOTIFICATIONS_ENABLED: 'false',
         CORS_ORIGINS: 'https://test.example.test', NODE_ENV: 'test',
         RESEND_API_KEY: 'test-only', EMAIL_FROM: 'test@example.test', TEST_MAIL_PATH: mailPath,
@@ -471,7 +465,7 @@ test('HTTP + PostgreSQL real: login, escopo, concorrência e revogação de sess
       child.kill();
       await exited;
     }
-    await pool.end();
-    if (mailDir) await rm(mailDir, { recursive: true, force: true });
+    try { await fechar(); }
+    finally { if (mailDir) await rm(mailDir, { recursive: true, force: true }); }
   }
 });
