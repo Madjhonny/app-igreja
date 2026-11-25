@@ -128,6 +128,7 @@ test('falha reverte alteracao otimista', async () => {
   assert.equal(await c.alternar(3), false);
   assert.deepEqual(c.obterEstado().ids, [1, 2]);
   assert.equal(c.obterEstado().pendente, null);
+  assert.match(c.obterEstado().erro, /confirmar a alteração/);
 });
 
 test('reconcilia resposta perdida com estado real do servidor', async () => {
@@ -144,10 +145,11 @@ test('reconcilia resposta perdida com estado real do servidor', async () => {
   c.trocarSessao('conta-1');
   await c.carregar();
 
-  await c.alternar(3);
+  assert.equal(await c.alternar(3), true);
 
   assert.deepEqual(c.obterEstado().ids, [1, 2, 3]);
   assert.equal(c.obterEstado().pronto, true);
+  assert.equal(c.obterEstado().erro, '');
 });
 
 test('falha na reconciliacao exige nova consulta', async () => {
@@ -210,6 +212,84 @@ test('resposta atrasada de outra conta e ignorada', async () => {
 
   assert.equal(await antiga, false);
   assert.deepEqual(c.obterEstado().ids, [9]);
+});
+
+test('retorno ao foco substitui a consulta antiga da mesma conta', async () => {
+  const antiga = diferido();
+  let sinalAntigo;
+  let chamadas = 0;
+  const c = criar({
+    listar: signal => {
+      chamadas++;
+      if (chamadas === 1) {
+        sinalAntigo = signal;
+        return antiga.promise;
+      }
+      return [9];
+    }
+  });
+
+  c.trocarSessao('conta-1');
+  const primeiraConsulta = c.carregar();
+  assert.equal(await c.carregar(), false);
+  assert.equal(await c.sincronizar(), true);
+  assert.equal(sinalAntigo.aborted, true);
+  antiga.resolve([1, 2]);
+
+  assert.equal(await primeiraConsulta, false);
+  assert.deepEqual(c.obterEstado().ids, [9]);
+  assert.equal(c.obterEstado().carregando, false);
+  assert.equal(chamadas, 2);
+});
+
+test('solicitações de foco durante uma escrita aguardam uma única consulta posterior', async () => {
+  const escrita = diferido();
+  const consultaPosterior = diferido();
+  let consultas = 0;
+  let sinalEscrita;
+  const c = criar({
+    listar: () => ++consultas === 1 ? [1] : consultaPosterior.promise,
+    definir: (_id, _marcado, signal) => {
+      sinalEscrita = signal;
+      return escrita.promise;
+    },
+  });
+
+  c.trocarSessao('conta-1');
+  await c.carregar();
+  const mutacao = c.alternar(2);
+  assert.equal(await c.sincronizar(), false);
+  assert.equal(await c.sincronizar(), false);
+  assert.equal(consultas, 1);
+  assert.equal(sinalEscrita.aborted, false);
+
+  escrita.resolve(true);
+  assert.equal(await mutacao, true);
+  assert.equal(consultas, 2);
+  consultaPosterior.resolve([2, 3]);
+  await consultaPosterior.promise;
+  assert.deepEqual(c.obterEstado().ids, [2, 3]);
+  assert.equal(c.obterEstado().carregando, false);
+});
+
+test('encerrar a sessão descarta a sincronização adiada por uma escrita', async () => {
+  const escrita = diferido();
+  let consultas = 0;
+  const c = criar({
+    listar: async () => { consultas++; return [1]; },
+    definir: () => escrita.promise,
+  });
+
+  c.trocarSessao('conta-1');
+  await c.carregar();
+  const mutacao = c.alternar(2);
+  await c.sincronizar();
+  c.encerrar();
+  escrita.resolve(true);
+
+  assert.equal(await mutacao, false);
+  assert.equal(consultas, 1);
+  assert.deepEqual(c.obterEstado().ids, []);
 });
 
 test('falha atrasada de outra conta nao reverte interesses atuais', async () => {

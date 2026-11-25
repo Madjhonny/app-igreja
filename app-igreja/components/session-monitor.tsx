@@ -182,9 +182,10 @@ export function SessionMonitor() {
       }
     );
 
-    // Revalida quando a janela recebe foco.
+    // Recupera a verificação da sessão ao voltar à janela ou à rede.
     if (Platform.OS === 'web') {
       window.addEventListener('focus', check);
+      window.addEventListener('online', check);
     }
 
     return () => {
@@ -195,6 +196,7 @@ export function SessionMonitor() {
 
       if (Platform.OS === 'web') {
         window.removeEventListener('focus', check);
+        window.removeEventListener('online', check);
       }
     };
   }, [check]);

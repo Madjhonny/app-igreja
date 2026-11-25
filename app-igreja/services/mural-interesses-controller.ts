@@ -25,8 +25,9 @@ export function criarControladorInteresses(
   publicar: (estado: EstadoInteresses) => void
 ) {
   let sessao: string | null = null;
-  let geracao = 0;
-  let operacao: AbortController | null = null;
+  type Operacao = { tipo: 'consulta' | 'alteracao'; controller: AbortController };
+  let operacao: Operacao | null = null;
+  let sincronizacaoPendente = false;
 
   let estado: EstadoInteresses = {
     ids: [],
@@ -44,9 +45,9 @@ export function criarControladorInteresses(
   function trocarSessao(novaSessao: string | null) {
     if (sessao === novaSessao) return;
 
-    geracao++;
-    operacao?.abort();
+    operacao?.controller.abort();
     operacao = null;
+    sincronizacaoPendente = false;
     sessao = novaSessao;
 
     atualizar({
@@ -58,34 +59,40 @@ export function criarControladorInteresses(
     });
   }
 
-  async function carregar(): Promise<boolean> {
-    if (!sessao || operacao) return false;
+  async function carregar(sincronizar = false): Promise<boolean> {
+    if (!sessao) return false;
+    if (operacao) {
+      if (!sincronizar) return false;
+      if (operacao.tipo === 'alteracao') {
+        sincronizacaoPendente = true;
+        return false;
+      }
+      operacao.controller.abort();
+    }
 
-    const atual = geracao;
-    const controller = new AbortController();
-
-    operacao = controller;
+    const atual: Operacao = { tipo: 'consulta', controller: new AbortController() };
+    operacao = atual;
 
     atualizar({ carregando: true, erro: '' });
 
     try {
-      const ids = await servico.listar(controller.signal);
+      const ids = await servico.listar(atual.controller.signal);
 
-      if (atual !== geracao) return false;
+      if (operacao !== atual) return false;
 
       atualizar({ ids, pronto: true });
       return true;
     } catch {
-      if (atual === geracao) {
+      if (operacao === atual) {
         atualizar({
           pronto: false,
-          erro: 'Nao foi possivel consultar seus interesses.',
+          erro: 'Não foi possível consultar seus interesses.',
         });
       }
 
       return false;
     } finally {
-      if (atual === geracao) {
+      if (operacao === atual) {
         operacao = null;
         atualizar({ carregando: false });
       }
@@ -102,12 +109,10 @@ export function criarControladorInteresses(
       return false;
     }
 
-    const atual = geracao;
     const anteriores = estado.ids;
     const marcado = !anteriores.includes(postId);
-    const controller = new AbortController();
-
-    operacao = controller;
+    const atual: Operacao = { tipo: 'alteracao', controller: new AbortController() };
+    operacao = atual;
 
     atualizar({
       ids: atualizarInteresse(anteriores, postId, marcado),
@@ -116,25 +121,28 @@ export function criarControladorInteresses(
     });
 
     try {
-      await servico.definir(postId, marcado, controller.signal);
+      await servico.definir(postId, marcado, atual.controller.signal);
 
-      return atual === geracao;
+      return operacao === atual;
     } catch {
-      if (atual !== geracao) return false;
+      if (operacao !== atual) return false;
 
-      atualizar({
-        ids: anteriores,
-        erro: 'Nao foi possivel confirmar a alteracao.',
-      });
+      atualizar({ ids: anteriores });
 
       try {
-        const ids = await servico.listar(controller.signal);
+        const ids = await servico.listar(atual.controller.signal);
 
-        if (atual === geracao) {
-          atualizar({ ids, pronto: true });
-        }
+        if (operacao !== atual) return false;
+
+        const confirmado = ids.includes(postId) === marcado;
+        atualizar({
+          ids,
+          pronto: true,
+          erro: confirmado ? '' : 'Não foi possível confirmar a alteração.',
+        });
+        return confirmado;
       } catch {
-        if (atual === geracao) {
+        if (operacao === atual) {
           atualizar({
             pronto: false,
             erro: 'Atualize seus interesses antes de tentar novamente.',
@@ -144,9 +152,13 @@ export function criarControladorInteresses(
 
       return false;
     } finally {
-      if (atual === geracao) {
+      if (operacao === atual) {
         operacao = null;
         atualizar({ pendente: null });
+        if (sincronizacaoPendente) {
+          sincronizacaoPendente = false;
+          void carregar();
+        }
       }
     }
   }
@@ -154,6 +166,7 @@ export function criarControladorInteresses(
   return {
     trocarSessao,
     carregar,
+    sincronizar: () => carregar(true),
     alternar,
     obterEstado: () => estado,
     encerrar: () => trocarSessao(null),
