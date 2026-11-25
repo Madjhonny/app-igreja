@@ -73,3 +73,12 @@ test('preview gera APK interno com versionCode remoto incremental e ambiente iso
   assert.equal(eas.build.preview.android.buildType, 'apk');
   assert.equal(eas.build.production.environment, 'production');
 });
+
+test('versão pública do Expo coincide com o pacote e o lockfile do frontend', () => {
+  const { expo } = require('../app.json');
+  const pacote = require('../package.json');
+  const lockfile = require('../package-lock.json');
+  assert.equal(pacote.version, expo.version);
+  assert.equal(lockfile.version, expo.version);
+  assert.equal(lockfile.packages[''].version, expo.version);
+});
