@@ -115,7 +115,7 @@ export default function TabLayout() {
     setTransicao({ indice: indiceAtual, direcao: Math.sign(indiceAtual - transicao.indice) });
   }
 
-  return (
+  const abas = (
     <DirecaoTransicao.Provider value={transicao.direcao}>
       <Tabs
         screenOptions={{
@@ -171,9 +171,13 @@ export default function TabLayout() {
       </Tabs>
     </DirecaoTransicao.Provider>
   );
+
+  // Na web, a transformação das abas fora de cena não deve alargar a página.
+  return Platform.OS === 'web' ? <View style={styles.areaAbasWeb}>{abas}</View> : abas;
 }
 
 const styles = StyleSheet.create({
+  areaAbasWeb: { flex: 1, overflow: 'hidden' },
   indicadorAtivo: {
     position: 'absolute',
     left: 0,
