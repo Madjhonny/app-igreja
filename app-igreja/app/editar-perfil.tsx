@@ -5,6 +5,7 @@ import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, Activi
 import { router, Stack } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { selecionarImagem } from '@/services/seletor-imagem';
 
 export default function TelaEditarPerfil() {
   const { alert: mostrarDialogo } = useAppDialog();
@@ -37,15 +38,18 @@ export default function TelaEditarPerfil() {
       return;
     }
 
-    const resultado = await ImagePicker.launchImageLibraryAsync({
+    const resultado = await selecionarImagem({
       mediaTypes: ['images'],
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.7,
       base64: true,
+    }).catch(() => {
+      mostrarDialogo('Imagem inválida', 'Não foi possível preparar a imagem para envio.');
+      return null;
     });
 
-    if (!resultado.canceled && resultado.assets[0]) {
+    if (resultado && !resultado.canceled && resultado.assets[0]) {
       const asset = resultado.assets[0];
       if (asset.base64) {
         const tamanhoAproximado = Math.ceil(asset.base64.length * 0.75);

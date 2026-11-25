@@ -37,8 +37,9 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const request = event.request;
-  if (request.method !== 'GET' || request.mode !== 'navigate' ||
-      new URL(request.url).origin !== self.location.origin) {
+  if (request.method !== 'GET' || request.mode !== 'navigate') return;
+  const url = new URL(request.url);
+  if (url.origin !== self.location.origin || url.pathname === '/api' || url.pathname.startsWith('/api/')) {
     return;
   }
 
