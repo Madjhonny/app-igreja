@@ -273,6 +273,7 @@ export async function verificarAcessibilidade({
   await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 2 });
   await page.waitForFunction(() => Math.abs(visualViewport.scale - 2) < 0.01);
   await cdp.send('Emulation.setPageScaleFactor', { pageScaleFactor: 1 });
+  await page.waitForFunction(() => innerWidth === 320 && Math.abs(visualViewport.scale - 1) < 0.01);
   await cdp.detach();
   const textosAmpliados = await page.evaluate(() => {
     const textos = [...document.querySelectorAll('[role="heading"], [data-testid="filtro-todos"] > div, [data-testid^="mural-abrir-"] > div')];
@@ -282,11 +283,21 @@ export async function verificarAcessibilidade({
   });
   assert.ok(textosAmpliados.length > 2 && textosAmpliados.every(escala => escala === 2));
   await card.waitFor();
-  const reflow = await page.evaluate(() => ({
-    viewport: innerWidth, documento: document.documentElement.scrollWidth,
-    card: document.querySelector('[data-testid^="mural-card-"]').getBoundingClientRect().width,
-  }));
-  assert.ok(reflow.documento <= reflow.viewport + 1 && reflow.card <= reflow.viewport);
+  const reflow = await page.evaluate(() => {
+    const viewport = innerWidth;
+    const documento = document.documentElement.scrollWidth;
+    const card = document.querySelector('[data-testid^="mural-card-"]').getBoundingClientRect().width;
+    const elementos = documento > viewport + 1 || card > viewport
+      ? Array.from(document.querySelectorAll('body *')).flatMap(el => {
+        const { left, right, width } = el.getBoundingClientRect();
+        if (!width || (left >= -1 && right <= viewport + 1 && el.scrollWidth <= el.clientWidth + 1)) return [];
+        return [{ tag: el.tagName, id: el.id, papel: el.getAttribute('role'), teste: el.getAttribute('data-testid'),
+          esquerda: left, direita: right, larguraConteudo: el.scrollWidth, largura: el.clientWidth }];
+      }).slice(0, 18) : [];
+    return { viewport, documento, card, elementos };
+  });
+  assert.ok(reflow.documento <= reflow.viewport + 1 && reflow.card <= reflow.viewport,
+    `Texto ampliado causou rolagem horizontal: ${JSON.stringify(reflow)}`);
   evidencias.reflow = { ...reflow, escalaDoTexto: 2, escalaVisualEmulada: 2 };
   await captura('eventos-texto-ampliado');
   await writeFile(join(diretorio, 'evidencias-acessibilidade.json'), JSON.stringify(evidencias, null, 2), 'utf8');
