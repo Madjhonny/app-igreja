@@ -65,7 +65,7 @@ function createPushNotifications({ pool, accessToken, fetchImpl = fetch, logger 
     let tickets;
     try {
       tickets = await expo('send', rows.map(row => ({ to: row.token, title: 'Agenda ADP',
-        body: 'Há novidades na agenda. Abra o aplicativo para conferir.', channelId: 'agenda', ttl: 3600 })));
+        body: 'Há novidades na agenda. Abra o aplicativo para conferir.', data: { tipo: 'agenda' }, channelId: 'agenda', ttl: 3600 })));
       if (!Array.isArray(tickets) || tickets.length !== rows.length) throw new Error('unexpected tickets');
     } catch {
       // Não reenviar um POST de resultado ambíguo: evita avisos duplicados.

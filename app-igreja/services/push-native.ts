@@ -1,12 +1,26 @@
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
-import Constants from 'expo-constants';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { Platform } from 'react-native';
+import { observarToquesNaAgenda } from './push-agenda';
 import { createPushPreference, type PushRecord } from './push-preference';
 
 const STORAGE_KEY = 'agenda-adp-push-registration';
-export const pushAvailable = (Platform.OS === 'android' || Platform.OS === 'ios') && process.env.EXPO_PUBLIC_PUSH_ENABLED === 'true';
+export const pushAvailable = (Platform.OS === 'android' || Platform.OS === 'ios') &&
+  Constants.executionEnvironment !== ExecutionEnvironment.StoreClient && process.env.EXPO_PUBLIC_PUSH_ENABLED === 'true';
+
+export function observarAberturaDaAgenda(podeAbrir: () => Promise<boolean>, abrir: () => void) {
+  if (!pushAvailable) return () => {};
+  return observarToquesNaAgenda({
+    acaoPadrao: Notifications.DEFAULT_ACTION_IDENTIFIER,
+    ultimaResposta: Notifications.getLastNotificationResponse,
+    limparResposta: Notifications.clearLastNotificationResponse,
+    inscrever: Notifications.addNotificationResponseReceivedListener,
+    podeAbrir,
+    abrir,
+  });
+}
 
 if (pushAvailable) Notifications.setNotificationHandler({ handleNotification: async () => ({
   shouldShowBanner: true, shouldShowList: true, shouldPlaySound: false, shouldSetBadge: false,

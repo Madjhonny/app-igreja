@@ -1,4 +1,5 @@
 import { useAppDialog } from '@/components/app-dialog';
+import { useHydrated } from '@/hooks/use-hydrated';
 import { apiFetch, authenticatedFetch } from '@/services/session';
 import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, Modal, FlatList, Platform } from 'react-native';
@@ -50,7 +51,21 @@ function lerDataHoraWeb(dataTexto: string, horaTexto: string): Date | null {
   return resultado;
 }
 
+const voltarParaAgenda = () => {
+  if (router.canGoBack()) router.back();
+  else router.replace('/(tabs)/agenda');
+};
+
 export default function TelaEditarEvento() {
+  const hidratado = useHydrated();
+  return hidratado ? <FormularioEditarEvento /> : (
+    <View style={styles.container} accessibilityState={{ busy: true }}>
+      <ActivityIndicator accessibilityLabel="Carregando evento" color="#2A4B4C" />
+    </View>
+  );
+}
+
+function FormularioEditarEvento() {
   const { alert: mostrarDialogo } = useAppDialog();
   // Recebe os dados que vieram da tela de Agenda
   const params = useLocalSearchParams();
@@ -175,7 +190,7 @@ export default function TelaEditarEvento() {
       const dados = await resposta.json().catch(() => ({}));
       if (resposta.ok) {
         mostrarDialogo("Sucesso!", "Evento atualizado com sucesso.", [
-          { text: "Voltar à agenda", onPress: () => router.back() },
+          { text: "Voltar à agenda", onPress: voltarParaAgenda },
         ]);
       } else if (resposta.status === 409 && dados.codigo === 'CONFLITO_AGENDA' && dados.podeConfirmar) {
         const encontrados = (dados.eventosConflitantes || []).slice(0, 3)
@@ -213,7 +228,7 @@ export default function TelaEditarEvento() {
 
       if (resposta.ok) {
         mostrarDialogo("Excluído", "O evento foi apagado.", [
-          { text: "Voltar à agenda", onPress: () => router.back() },
+          { text: "Voltar à agenda", onPress: voltarParaAgenda },
         ]);
       } else {
         mostrarDialogo("Erro", "Não foi possível excluir o evento.");
@@ -228,7 +243,7 @@ export default function TelaEditarEvento() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+        <TouchableOpacity onPress={voltarParaAgenda} style={styles.backButton}>
           <Text style={styles.backButtonText}>❮ Voltar</Text>
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Editar Evento</Text>

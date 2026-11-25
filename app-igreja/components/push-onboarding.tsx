@@ -1,10 +1,10 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { usePathname } from 'expo-router';
-import { useEffect } from 'react';
+import { router, usePathname, useRootNavigationState } from 'expo-router';
+import { useEffect, useRef } from 'react';
 import { Alert, Platform } from 'react-native';
 import { useSessionUser } from '@/hooks/use-session-user';
 import { API_URL, getSessionToken, getStoredUser } from '@/services/session';
-import { pushAvailable, pushPreference } from '@/services/push-native';
+import { observarAberturaDaAgenda, pushAvailable, pushPreference } from '@/services/push-native';
 import { createPushOnboarding } from '@/services/push-onboarding';
 
 const offer = createPushOnboarding({
@@ -31,6 +31,20 @@ const offer = createPushOnboarding({
 export function PushOnboarding() {
   const [user] = useSessionUser();
   const pathname = usePathname();
+  const navigationKey = useRootNavigationState()?.key;
+  const rota = useRef(pathname);
+  useEffect(() => { rota.current = pathname; }, [pathname]);
+
+  useEffect(() => {
+    if (!navigationKey) return;
+    return observarAberturaDaAgenda(async () => {
+      // Na inicialização, a navegação normal decide entre Login e Agenda.
+      const [usuario, token] = await Promise.all([getStoredUser(), getSessionToken()]);
+      if (usuario?.status_conta !== 'APROVADO' || !token || await pushPreference.status(usuario.id) !== 'active') return false;
+      return token === await getSessionToken() && !['/', '/login', '/registro', '/recuperar-senha'].includes(rota.current);
+    }, () => router.navigate('/(tabs)/agenda'));
+  }, [navigationKey]);
+
   useEffect(() => {
     if (pathname === '/agenda' || pathname === '/(tabs)/agenda') void offer(API_URL, user);
   }, [pathname, user]);

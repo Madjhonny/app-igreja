@@ -7,6 +7,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import { prepareMuralImage } from '@/services/mural-image';
+import { selecionarImagem } from '@/services/seletor-imagem';
 
 export default function TelaCriarPost() {
   const { alert: mostrarDialogo } = useAppDialog();
@@ -39,7 +40,7 @@ export default function TelaCriarPost() {
         }
       }
 
-      const resultado = await ImagePicker.launchImageLibraryAsync({
+      const resultado = await selecionarImagem({
         mediaTypes: ['images'],
         allowsEditing: true,
         quality: 1,

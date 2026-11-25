@@ -1,4 +1,5 @@
 import { useAppDialog } from '@/components/app-dialog';
+import { useHydrated } from '@/hooks/use-hydrated';
 import { API_URL, apiFetch, getSessionToken } from '@/services/session';
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
@@ -46,7 +47,8 @@ const ordenarEventos = (eventos: any[]) => [...eventos].sort((a, b) =>
 export default function TelaGestaoDatas() {
   const { alert: mostrarDialogo, showDialog } = useAppDialog();
   const { width, height: windowHeight } = useWindowDimensions();
-  const isDesktop = width >= 900;
+  const hidratado = useHydrated();
+  const isDesktop = hidratado && width >= 900;
 
   const [token, setToken] = useState('');
   const [mesAtual, setMesAtual] = useState(new Date().getMonth());
@@ -1268,7 +1270,7 @@ export default function TelaGestaoDatas() {
 
           <View style={styles.navigationTitleContainer}>
             <Text style={styles.monthTitle}>
-              {modoVisualizacao === 'calendar'
+              {!hidratado ? 'Calendário' : modoVisualizacao === 'calendar'
                 ? (isDesktop ? `ANO ${anoAtual}` : `${MESES[mesAtual]} ${anoAtual}`)
                 : tituloPeriodoAgenda()}
             </Text>
@@ -1363,7 +1365,7 @@ export default function TelaGestaoDatas() {
 
       {/* CONTEÚDO */}
 
-      {carregando ? (
+      {!hidratado || carregando ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#2A4B4C" />
           <Text style={styles.loadingText}>

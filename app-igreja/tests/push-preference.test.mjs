@@ -2,6 +2,60 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createPushPreference } from '../services/push-preference.ts';
 import { createPushOnboarding } from '../services/push-onboarding.ts';
+import { observarToquesNaAgenda } from '../services/push-agenda.ts';
+
+const respostaAgenda = (id, data = { tipo: 'agenda' }, acao = 'toque') => ({
+  actionIdentifier: acao,
+  notification: { request: { identifier: id, content: { data } } },
+});
+
+function observarAgenda({ ultima = null, podeAbrir = async () => true } = {}) {
+  let tratar;
+  const eventos = [];
+  const fechar = observarToquesNaAgenda({
+    acaoPadrao: 'toque', ultimaResposta: () => ultima,
+    limparResposta: () => eventos.push('limpar'),
+    inscrever: callback => { tratar = callback; return { remove: () => eventos.push('remover') }; },
+    podeAbrir, abrir: () => eventos.push('agenda'),
+  });
+  return { tratar, fechar, eventos };
+}
+
+test('abertura fria e listener consomem a mesma notificação da Agenda uma única vez', async () => {
+  const ultima = respostaAgenda('1');
+  const observer = observarAgenda({ ultima });
+  observer.tratar(ultima);
+  await Promise.resolve();
+  assert.deepEqual(observer.eventos, ['limpar', 'agenda']);
+  observer.tratar(respostaAgenda('2'));
+  await Promise.resolve();
+  observer.tratar(ultima);
+  await Promise.resolve();
+  assert.deepEqual(observer.eventos, ['limpar', 'agenda', 'limpar', 'agenda']);
+});
+
+test('abertura por push aceita somente a ação padrão e o tipo Agenda', async () => {
+  const observer = observarAgenda();
+  observer.tratar(respostaAgenda('1', { url: 'https://example.test/externo' }));
+  observer.tratar(respostaAgenda('2', { tipo: 'agenda' }, 'recusar'));
+  observer.tratar(respostaAgenda(''));
+  await Promise.resolve();
+  assert.deepEqual(observer.eventos, []);
+});
+
+test('sessão indisponível evita navegação e a desmontagem descarta confirmação atrasada', async () => {
+  const bloqueado = observarAgenda({ ultima: respostaAgenda('1'), podeAbrir: async () => false });
+  await Promise.resolve();
+  assert.deepEqual(bloqueado.eventos, ['limpar']);
+
+  const permissao = Promise.withResolvers();
+  const observer = observarAgenda({ podeAbrir: () => permissao.promise });
+  observer.tratar(respostaAgenda('2'));
+  observer.fechar();
+  permissao.resolve(true);
+  await permissao.promise;
+  assert.deepEqual(observer.eventos, ['limpar', 'remover']);
+});
 
 function setup() {
   let record = null, time = 0, token = 'ExpoPushToken[test_token_123]', fail = false, failRevoke = false;

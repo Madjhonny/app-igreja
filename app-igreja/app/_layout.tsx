@@ -1,4 +1,6 @@
 import { Stack, type ErrorBoundaryProps } from 'expo-router';
+import { useFonts } from 'expo-font';
+import Ionicons from '@expo/vector-icons/Ionicons';
 import { useEffect } from 'react';
 import { View, Text, Pressable } from 'react-native';
 import { clientMonitor } from '@/services/session';
@@ -23,6 +25,9 @@ export function ErrorBoundary({ retry }: ErrorBoundaryProps) {
 }
 
 export default function RootLayout() {
+  // Registra a fonte no HTML estático antes de renderizar os ícones das rotas.
+  useFonts(Ionicons.font);
+
   return (
     <AppDialogProvider>
       <View style={{ flex: 1 }}>

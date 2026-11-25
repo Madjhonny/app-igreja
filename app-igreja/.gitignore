@@ -6,6 +6,7 @@ node_modules/
 # Expo
 .expo/
 dist/
+/dist-interesses-test/
 web-build/
 expo-env.d.ts
 
@@ -13,11 +14,14 @@ expo-env.d.ts
 .kotlin/
 *.orig.*
 *.jks
+*.keystore
 *.p8
 *.p12
 *.key
 *.mobileprovision
 google-services.json
+GoogleService-Info.plist
+credentials.json
 
 # Metro
 .metro-health-check*

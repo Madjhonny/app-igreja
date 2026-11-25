@@ -45,7 +45,8 @@ test('envio em lote contém somente texto genérico, registra ticket e remove to
   await service.drain();
   assert.equal(sent.length, 1);
   assert.equal(sent[0][2], 'Bearer test-secret');
-  assert.deepEqual(Object.keys(sent[0][1][0]).sort(), ['body', 'channelId', 'title', 'to', 'ttl']);
+  assert.deepEqual(Object.keys(sent[0][1][0]).sort(), ['body', 'channelId', 'data', 'title', 'to', 'ttl']);
+  assert.deepEqual(sent[0][1][0].data, { tipo: 'agenda' });
   assert.ok(queries.some(([sql, args]) => sql.includes("SET state = 'receipt'") && args[1] === 'ticket'));
   assert.ok(queries.some(([sql, args]) => sql.includes('DELETE FROM push_devices WHERE id') && args[0] === 5 && args[1] === 'i'));
 });

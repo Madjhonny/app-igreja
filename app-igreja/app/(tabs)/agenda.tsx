@@ -7,6 +7,8 @@ import {
   isGuestMode,
 } from '@/services/session';
 import { useSessionUser } from '@/hooks/use-session-user';
+import { useHydrated } from '@/hooks/use-hydrated';
+import { useReducedMotion } from '@/hooks/use-reduced-motion';
 import React, {
   useState,
   useCallback,
@@ -85,6 +87,7 @@ type PaginaMesProps = {
   largura: number;
   esquerda: number;
   alturaLinha: number;
+  visivel: boolean;
 };
 
 const PaginaMes = React.memo(function PaginaMes({
@@ -94,6 +97,7 @@ const PaginaMes = React.memo(function PaginaMes({
   largura,
   esquerda,
   alturaLinha,
+  visivel,
 }: PaginaMesProps) {
   const larguraCelula = largura / 7;
   const tamanho = Math.min(alturaLinha > ALTURA_LINHA ? 44 : TAMANHO_MARCA, larguraCelula);
@@ -101,6 +105,11 @@ const PaginaMes = React.memo(function PaginaMes({
   const topo = (alturaLinha - tamanho) / 2;
 
   const dias = gerarDiasDoMes(ano, mes);
+  const hoje = new Date();
+  const diaHoje =
+    hoje.getFullYear() === ano && hoje.getMonth() === mes
+      ? hoje.getDate()
+      : null;
 
   while (dias.length % 7 !== 0) {
     dias.push(null);
@@ -118,6 +127,8 @@ const PaginaMes = React.memo(function PaginaMes({
 
   return (
     <View
+      aria-hidden={!visivel}
+      importantForAccessibility={visivel ? 'auto' : 'no-hide-descendants'}
       style={[
         styles.paginaMes,
         { width: largura, left: esquerda },
@@ -178,13 +189,42 @@ const PaginaMes = React.memo(function PaginaMes({
               {celulas.map((item, c) => (
                 <View
                   key={c}
+                  testID="agenda-dia"
+                  accessible={!!item}
+                  accessibilityLabel={item ? [
+                    `${item.dia}/${mes + 1}/${ano}`,
+                    item.dia === diaHoje ? 'Hoje' : '',
+                    marcados[c] ? 'Com evento' : '',
+                  ].filter(Boolean).join(', ') : undefined}
+                  {...(Platform.OS === 'web' && item ? {
+                    role: 'group' as const,
+                    'aria-current': item.dia === diaHoje ? 'date' as const : undefined,
+                  } : {})}
                   style={[
                     styles.dayBox,
                     { width: larguraCelula, height: alturaLinha },
                   ]}
                 >
                   {item ? (
+                    <>
+                    {item.dia === diaHoje && (
+                      <View
+                        pointerEvents="none"
+                        style={[
+                          styles.todayOutline,
+                          {
+                            width: tamanho,
+                            height: tamanho,
+                            borderRadius: tamanho / 2,
+                            borderColor: marcados[c]
+                              ? cores.bege
+                              : cores.verde,
+                          },
+                        ]}
+                      />
+                    )}
                     <Text
+                      aria-hidden
                       style={[
                         styles.dayText,
                         alturaLinha > ALTURA_LINHA && styles.dayTextWeb,
@@ -193,8 +233,7 @@ const PaginaMes = React.memo(function PaginaMes({
                       ]}
                     >
                       {item.dia}
-                    </Text>
-                  ) : null}
+                    </Text></>) : null}
                 </View>
               ))}
             </View>
@@ -208,8 +247,10 @@ const PaginaMes = React.memo(function PaginaMes({
 export default function TelaAgenda() {
   const [usuario, setUsuario] = useSessionUser();
   const { width: larguraTela } = useWindowDimensions();
+  const hidratado = useHydrated();
+  const reduzirMovimento = useReducedMotion();
   // Apenas navegadores largos exibem calendário e atividades em duas colunas.
-  const webDuasColunas = Platform.OS === 'web' && larguraTela >= 980;
+  const webDuasColunas = hidratado && Platform.OS === 'web' && larguraTela >= 980;
   const alturaLinhaCalendario = webDuasColunas ? 54 : ALTURA_LINHA;
 
   const [indiceAtual, setIndiceAtual] = useState(() => {
@@ -218,6 +259,9 @@ export default function TelaAgenda() {
   });
   const mesAtual = indiceAtual % 12;
   const anoAtual = Math.floor(indiceAtual / 12);
+  const semanasDoMes = Math.ceil(
+    gerarDiasDoMes(anoAtual, mesAtual).length / 7
+  );
   const [resultadoMes, setResultadoMes] = useState<{ month: number; events: any[] } | null>(null);
   const eventosDoMes = monthEvents(resultadoMes, indiceAtual, EVENTOS_VAZIOS);
   const [mesDaConsulta, setMesDaConsulta] = useState<number | null>(null);
@@ -521,12 +565,12 @@ export default function TelaAgenda() {
     (valor: number, duracao: number) => {
       Animated.timing(trilhoX, {
         toValue: valor,
-        duration: duracao,
+        duration: reduzirMovimento ? 0 : duracao,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: Platform.OS !== 'web',
       }).start();
     },
-    [trilhoX]
+    [reduzirMovimento, trilhoX]
   );
 
   useEffect(() => {
@@ -826,9 +870,20 @@ export default function TelaAgenda() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>
-          Agenda
-        </Text>
+        <View style={styles.headerContent}>
+          <Text accessibilityRole="header" style={styles.headerTitle}>
+            Agenda
+          </Text>
+          <Text style={styles.headerSubtitle}>
+            Acompanhe a programação da igreja
+          </Text>
+        </View>
+        <Ionicons
+          name="calendar-outline"
+          size={38}
+          color={cores.neutro}
+          style={styles.headerIcon}
+        />
       </View>
 
       {avisoAgenda ? (
@@ -954,6 +1009,7 @@ export default function TelaAgenda() {
             {/* CALENDÁRIO */}
 
             <View
+              testID="agenda-calendario"
               style={
                 [styles.calendarCard, webDuasColunas && styles.calendarCardWeb]
               }
@@ -979,6 +1035,8 @@ export default function TelaAgenda() {
                 false
               }
             >
+              {hidratado ? (
+                <>
               <View
                 style={
                   styles.monthNavigator
@@ -986,6 +1044,7 @@ export default function TelaAgenda() {
               >
                 <TouchableOpacity
                   accessibilityLabel="Mês anterior"
+                  accessibilityRole="button"
                   onPress={() =>
                     mudarMes(-1)
                   }
@@ -1002,6 +1061,9 @@ export default function TelaAgenda() {
                 </TouchableOpacity>
 
                 <Text
+                  aria-live="polite"
+                  accessibilityLiveRegion="polite"
+                  testID="agenda-mes"
                   style={[styles.monthTitle, webDuasColunas && styles.monthTitleWeb]}
                 >
                   {mesesNomes[mesAtual]}{' '}
@@ -1010,6 +1072,7 @@ export default function TelaAgenda() {
 
                 <TouchableOpacity
                   accessibilityLabel="Próximo mês"
+                  accessibilityRole="button"
                   onPress={() =>
                     mudarMes(1)
                   }
@@ -1027,6 +1090,7 @@ export default function TelaAgenda() {
               </View>
 
               <View
+                testID="agenda-dias-semana"
                 style={
                   styles.weekDaysContainer
                 }
@@ -1053,8 +1117,7 @@ export default function TelaAgenda() {
 
               <View
                 style={
-                  [styles.gradeJanela, { height: alturaLinhaCalendario * LINHAS_DA_GRADE }]
-                }
+                  [styles.gradeJanela, { height: alturaLinhaCalendario * semanasDoMes }]}
                 onLayout={e => {
                   const l =
                     e.nativeEvent.layout.width;
@@ -1093,6 +1156,7 @@ export default function TelaAgenda() {
 
                       return (
                         <PaginaMes
+                          visivel={deslocamento === 0}
                           key={indice}
                           ano={Math.floor(
                             indice / 12
@@ -1116,6 +1180,21 @@ export default function TelaAgenda() {
                   )}
                 </Animated.View>
               </View>
+              <View style={styles.calendarLegend}>
+                <View style={styles.legendItem}>
+                  <View style={styles.legendToday} />
+                  <Text style={styles.legendText}>Hoje</Text>
+                </View>
+                <View style={styles.legendItem}>
+                  <View style={styles.legendEvent} />
+                  <Text style={styles.legendText}>Com evento</Text>
+                </View>
+              </View>
+                </>
+              ) : (
+                <ActivityIndicator accessibilityLabel="Carregando calendário" color={cores.verde} />
+              )}
+
             </View>
 
             {/* NOVO EVENTO:
@@ -1166,8 +1245,15 @@ export default function TelaAgenda() {
               Atividades do Mês
             </Text>
 
+            <Text style={styles.leitorTela} aria-live="polite" accessibilityLiveRegion="polite">
+              {mesDaConsulta === null || erroCarregamento ? '' : carregando
+                ? 'Carregando atividades do mês.'
+                : 'Atividades do mês atualizadas.'}
+            </Text>
+
             {carregando || mesDaConsulta !== indiceAtual ? (
               <ActivityIndicator
+                accessibilityLabel="Carregando atividades do mês"
                 size="small"
                 color={cores.verde}
                 style={{
@@ -1277,6 +1363,18 @@ export default function TelaAgenda() {
                       evento.data_fim
                     );
 
+                  const partesData = dataInicioFormatada.split('/');
+                  const diaEvento = partesData[0] || '--';
+                  const mesEvento = [
+                    'JAN', 'FEV', 'MAR', 'ABR',
+                    'MAI', 'JUN', 'JUL', 'AGO',
+                    'SET', 'OUT', 'NOV', 'DEZ',
+                  ][Number(partesData[1]) - 1] || '';
+                  const eventoMultidias = Boolean(
+                    dataFimFormatada &&
+                    dataFimFormatada !== dataInicioFormatada
+                  );
+
                   const periodoExibicao =
                     dataFimFormatada &&
                     dataFimFormatada !==
@@ -1287,6 +1385,9 @@ export default function TelaAgenda() {
                   return (
                     <TouchableOpacity
                       key={evento.id}
+                      accessibilityRole="button"
+                      accessibilityLabel={`${evento.titulo}. ${periodoExibicao}. ${evento.congregacao || 'Geral'}`}
+                      testID={`agenda-evento-${evento.id}`}
                       style={
                         [styles.eventCard, webDuasColunas && styles.eventCardWeb]
                       }
@@ -1307,13 +1408,12 @@ export default function TelaAgenda() {
                             styles.eventIconBox
                           }
                         >
-                          <Ionicons
-                            name="calendar"
-                            size={20}
-                            color={
-                              cores.verde
-                            }
-                          />
+                          <Text style={styles.eventDay}>
+                            {diaEvento}
+                          </Text>
+                          <Text style={styles.eventMonth}>
+                            {mesEvento}
+                          </Text>
                         </View>
 
                         <View
@@ -1331,6 +1431,11 @@ export default function TelaAgenda() {
                             }
                           </Text>
 
+                          {eventoMultidias && (
+                            <Text style={styles.eventPeriod}>
+                              {periodoExibicao}
+                            </Text>
+                          )}
                           <View
                             style={
                               styles.eventMetaRow
@@ -1352,12 +1457,7 @@ export default function TelaAgenda() {
                                 styles.eventCardDate
                               }
                             >
-                              {
-                                periodoExibicao
-                              }{' '}
-                              às{' '}
-                              {evento.horario ||
-                                '00:00'}
+                              {evento.horario || 'Horário não informado'}
                             </Text>
                           </View>
 
@@ -1411,7 +1511,8 @@ export default function TelaAgenda() {
 
       <Modal
         visible={modalFiltroVisivel}
-        animationType="fade"
+        animationType={reduzirMovimento ? 'none' : 'fade'}
+        accessibilityLabel="Filtrar por congregação"
         transparent
         onRequestClose={() =>
           setModalFiltroVisivel(false)
@@ -1476,12 +1577,11 @@ export default function TelaAgenda() {
                 style={
                   styles.filtroOpcao
                 }
-                accessibilityRole="radio"
-                accessibilityState={{
-                  checked:
-                    congregacaoFiltrada ===
-                    null,
-                }}
+                accessibilityRole={Platform.OS === 'web' ? 'button' : 'radio'}
+                accessibilityLabel="Todas as congregações"
+                {...(Platform.OS === 'web'
+                  ? { 'aria-pressed': congregacaoFiltrada === null }
+                  : { accessibilityState: { checked: congregacaoFiltrada === null } })}
                 onPress={() => {
                   setCongregacaoFiltrada(
                     null
@@ -1520,12 +1620,11 @@ export default function TelaAgenda() {
                     style={
                       styles.filtroOpcao
                     }
-                    accessibilityRole="radio"
-                    accessibilityState={{
-                      checked:
-                        congregacaoFiltrada ===
-                        congregacao.id,
-                    }}
+                    accessibilityRole={Platform.OS === 'web' ? 'button' : 'radio'}
+                    accessibilityLabel={congregacao.nome}
+                    {...(Platform.OS === 'web'
+                      ? { 'aria-pressed': congregacaoFiltrada === congregacao.id }
+                      : { accessibilityState: { checked: congregacaoFiltrada === congregacao.id } })}
                     onPress={() => {
                       setCongregacaoFiltrada(
                         congregacao.id
@@ -1613,7 +1712,8 @@ export default function TelaAgenda() {
         visible={
           modalDetalhesVisivel
         }
-        animationType="slide"
+        animationType={reduzirMovimento ? 'none' : Platform.OS === 'web' ? 'fade' : 'slide'}
+        accessibilityLabel="Detalhes do evento"
         transparent
         onRequestClose={
           fecharDetalhes
@@ -1757,6 +1857,7 @@ export default function TelaAgenda() {
               <>
                 <TouchableOpacity
                   accessibilityLabel="Fechar detalhes"
+                  accessibilityRole="button"
                   style={
                     styles.closeModalButton
                   }
@@ -2023,6 +2124,7 @@ export default function TelaAgenda() {
 }
 
 const styles = StyleSheet.create({
+  leitorTela: { position: 'absolute', width: 1, height: 1, overflow: 'hidden' },
   container: {
     flex: 1,
     backgroundColor: cores.verde,
@@ -2030,16 +2132,35 @@ const styles = StyleSheet.create({
 
   header: {
     backgroundColor: cores.verde,
-    paddingTop: 52,
-    paddingBottom: 26,
+    paddingTop: 48,
+    paddingBottom: 20,
+    paddingHorizontal: 22,
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+
+  headerContent: {
+    flex: 1,
+  },
+
+  headerIcon: {
+    opacity: 0.8,
   },
 
   headerTitle: {
     color: cores.bege,
-    fontSize: 20,
+    fontSize: 28,
     fontWeight: '700',
     letterSpacing: 0.3,
+  },
+
+  headerSubtitle: {
+    color: cores.suave,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 4,
   },
 
   feedbackBar: {
@@ -2068,7 +2189,7 @@ const styles = StyleSheet.create({
 
   scrollContent: {
     paddingHorizontal: 20,
-    paddingTop: 24,
+    paddingTop: 16,
     paddingBottom: 80,
   },
 
@@ -2124,7 +2245,7 @@ const styles = StyleSheet.create({
   },
 
   filtroContainer: {
-    marginBottom: 18,
+    marginBottom: 14,
   },
 
   filtroLabel: {
@@ -2205,6 +2326,7 @@ const styles = StyleSheet.create({
   },
 
   filtroOpcao: {
+    minHeight: 44,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
@@ -2239,9 +2361,9 @@ const styles = StyleSheet.create({
 
   calendarCard: {
     backgroundColor: cores.branco,
-    padding: 18,
+    padding: 14,
     borderRadius: 20,
-    marginBottom: 20,
+    marginBottom: 14,
     borderWidth: 1,
     borderColor: cores.suave,
     shadowColor: cores.verde,
@@ -2273,7 +2395,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 10,
   },
 
   monthTitle: {
@@ -2284,9 +2406,9 @@ const styles = StyleSheet.create({
   },
 
   arrowButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: cores.suave,
     alignItems: 'center',
     justifyContent: 'center',
@@ -2303,7 +2425,7 @@ const styles = StyleSheet.create({
   weekDayText: {
     fontWeight: '600',
     color: cores.verdeTexto,
-    width: '14.28%',
+    flex: 1,
     textAlign: 'center',
     fontSize: 12,
   },
@@ -2344,6 +2466,48 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
+  todayOutline: {
+    position: 'absolute',
+    borderWidth: 2,
+  },
+
+  calendarLegend: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    flexWrap: 'wrap',
+    gap: 18,
+    paddingTop: 12,
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: cores.suave,
+  },
+
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+
+  legendToday: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    borderColor: cores.verde,
+  },
+
+  legendEvent: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: cores.verde,
+  },
+
+  legendText: {
+    fontSize: 12,
+    color: cores.verde,
+  },
+
   dayText: {
     fontSize: 14,
     color: cores.verde,
@@ -2357,11 +2521,11 @@ const styles = StyleSheet.create({
   newButton: {
     backgroundColor: cores.verde,
     flexDirection: 'row',
-    height: 52,
+    height: 48,
     borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 28,
+    marginBottom: 16,
     shadowColor: cores.verde,
     shadowOpacity: 0.25,
     shadowRadius: 10,
@@ -2420,7 +2584,7 @@ const styles = StyleSheet.create({
 
   eventCard: {
     backgroundColor: cores.branco,
-    padding: 16,
+    padding: 12,
     borderRadius: 16,
     marginBottom: 12,
     flexDirection: 'row',
@@ -2453,17 +2617,39 @@ const styles = StyleSheet.create({
   },
 
   eventIconBox: {
-    width: 42,
-    height: 42,
+    width: 58,
+    minHeight: 64,
+    paddingVertical: 8,
     borderRadius: 12,
     backgroundColor: cores.suave,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 14,
+    marginRight: 12,
+  },
+
+  eventDay: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: cores.verde,
+    lineHeight: 28,
+  },
+
+  eventMonth: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: cores.verde,
+    letterSpacing: 0.8,
+  },
+
+  eventPeriod: {
+    fontSize: 12,
+    color: cores.verdeTexto,
+    marginBottom: 3,
   },
 
   eventCardTexts: {
     flex: 1,
+    minWidth: 0,
   },
 
   eventCardTitle: {
@@ -2513,9 +2699,9 @@ const styles = StyleSheet.create({
 
   closeModalButton: {
     alignSelf: 'flex-end',
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+    width: 44,
+    height: 44,
+    borderRadius: 22,
     backgroundColor: cores.suave,
     alignItems: 'center',
     justifyContent: 'center',

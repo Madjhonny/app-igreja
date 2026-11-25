@@ -6,6 +6,7 @@ import type { TextInputInstance } from 'react-native';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
+import { selecionarImagem } from '@/services/seletor-imagem';
 
 // Tokens visuais (somente aparência)
 const cores = {
@@ -88,15 +89,18 @@ export default function TelaRegistro() {
       return;
     }
 
-    const resultado = await ImagePicker.launchImageLibraryAsync({
+    const resultado = await selecionarImagem({
       mediaTypes: ['images'], 
       allowsEditing: true,
       aspect: [1, 1],
       quality: 0.5,
       base64: true,
+    }).catch(() => {
+      mostrarDialogo('Imagem inválida', 'Não foi possível preparar a foto para envio.');
+      return null;
     });
 
-    if (!resultado.canceled && resultado.assets[0].base64) {
+    if (resultado && !resultado.canceled && resultado.assets[0].base64) {
       const base64 = resultado.assets[0].base64;
       if (Math.ceil(base64.length * 0.75) > 1_500_000) {
         mostrarDialogo('Imagem muito grande', 'Escolha uma foto de até 1,5 MB.');
@@ -300,7 +304,8 @@ export default function TelaRegistro() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.replace('/login')} style={styles.backButton} activeOpacity={0.7}>
+        <TouchableOpacity onPress={() => router.replace('/login')} style={styles.backButton} activeOpacity={0.7}
+          accessibilityRole="button" accessibilityLabel="Voltar ao login">
           <Ionicons name="arrow-back" size={22} color={cores.bege} />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Criar Conta</Text>

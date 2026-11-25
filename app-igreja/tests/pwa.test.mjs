@@ -87,6 +87,7 @@ test('offline responde apenas com uma página genérica sem dados de usuário', 
 test('worker não intercepta API, upload, fotos ou recursos externos', () => {
   const w = worker(() => { throw new Error('não deve buscar'); });
   assert.equal(w.request({ url: origin + '/session', mode: 'cors' }), undefined);
+  assert.equal(w.request({ url: origin + '/api/sessao' }), undefined);
   assert.equal(w.request({ url: origin + '/mural', method: 'POST' }), undefined);
   assert.equal(w.request({ url: origin + '/perfil', mode: 'no-cors' }), undefined);
   assert.equal(w.request({ url: 'https://api.example/session' }), undefined);

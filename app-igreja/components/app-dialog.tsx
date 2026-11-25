@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { Modal, ScrollView, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { useReducedMotion } from '@/hooks/use-reduced-motion';
 
 type DialogAction = {
   text: string;
@@ -69,6 +70,7 @@ function periodo(item: ConflictDetail, prefixo = '') {
 
 export function AppDialogProvider({ children }: { children: React.ReactNode }) {
   const [dialog, setDialog] = useState<AppDialogOptions | null>(null);
+  const reduzirMovimento = useReducedMotion();
   const { height } = useWindowDimensions();
 
   const showDialog = useCallback((options: AppDialogOptions) => setDialog(options), []);
@@ -92,7 +94,8 @@ export function AppDialogProvider({ children }: { children: React.ReactNode }) {
       <Modal
         visible={!!dialog}
         transparent
-        animationType="fade"
+        animationType={reduzirMovimento ? 'none' : 'fade'}
+        accessibilityLabel={dialog?.title || 'Aviso'}
         statusBarTranslucent
         onRequestClose={() => {
           const cancelar = buttons.find(b => b.style === 'cancel');

@@ -1,4 +1,5 @@
 import { useAppDialog } from '@/components/app-dialog';
+import { useHydrated } from '@/hooks/use-hydrated';
 import { useSessionUser } from '@/hooks/use-session-user';
 import { apiFetch, authenticatedFetch, canManage, getSessionToken, getStoredUser } from '@/services/session';
 import React, { useState, useCallback } from 'react';
@@ -15,6 +16,8 @@ const voltarParaGestaoDeContas = () => {
 export default function TelaUsuariosCongregacao() {
   const { alert: mostrarDialogo } = useAppDialog();
   const { congregacaoNome } = useLocalSearchParams();
+  const hidratado = useHydrated();
+  const nomeCongregacao = hidratado && typeof congregacaoNome === 'string' ? congregacaoNome : undefined;
   const [usuarios, setUsuarios] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(false);
   const [usuarioLogado, setUsuarioLogado] = useSessionUser();
@@ -27,6 +30,7 @@ export default function TelaUsuariosCongregacao() {
   const [modalTrocarCongregacaoVisivel, setModalTrocarCongregacaoVisivel] = useState(false);
 
   const carregarDadosIniciais = useCallback(async () => {
+    if (!nomeCongregacao) return;
     setCarregando(true);
     try {
       const [token, user] = await Promise.all([getSessionToken(), getStoredUser()]);
@@ -44,7 +48,7 @@ export default function TelaUsuariosCongregacao() {
 
       if (resposta.ok) {
         const todosUsuarios = await resposta.json();
-        const filtrados = todosUsuarios.filter((u: any) => u.congregacao === congregacaoNome);
+        const filtrados = todosUsuarios.filter((u: any) => u.congregacao === nomeCongregacao);
         setUsuarios(filtrados);
       } else {
         voltarParaGestaoDeContas();
@@ -54,7 +58,7 @@ export default function TelaUsuariosCongregacao() {
     } finally {
       setCarregando(false);
     }
-  }, [congregacaoNome, setUsuarioLogado, mostrarDialogo]);
+  }, [nomeCongregacao, setUsuarioLogado, mostrarDialogo]);
 
   useFocusEffect(useCallback(() => {
     void carregarDadosIniciais();
@@ -62,6 +66,7 @@ export default function TelaUsuariosCongregacao() {
 
   const alterarStatus = async (novoStatus: string) => {
     setModalStatusVisivel(false);
+    if (!podeAlterarStatus) return;
     try {
       const resposta = await authenticatedFetch(`/usuarios/${usuarioSelecionado.id}/status`, {
         method: 'PUT',
@@ -71,12 +76,16 @@ export default function TelaUsuariosCongregacao() {
       if (resposta.ok) {
         setUsuarioSelecionado({ ...usuarioSelecionado, status_conta: novoStatus });
         void carregarDadosIniciais();
+      } else {
+        const dados = await resposta.json();
+        mostrarDialogo('Erro', dados.erro || 'Não foi possível alterar o status.');
       }
     } catch { mostrarDialogo('Erro', 'Falha na conexão.'); }
   };
 
   const alterarNivel = async (novoNivel: string) => {
     setModalNivelVisivel(false);
+    if (!podeAlterarNivel || !niveisDisponiveis.includes(novoNivel)) return;
     try {
       const resposta = await authenticatedFetch(`/usuarios/${usuarioSelecionado.id}/nivel`, {
         method: 'PUT',
@@ -86,6 +95,9 @@ export default function TelaUsuariosCongregacao() {
       if (resposta.ok) {
         setUsuarioSelecionado({ ...usuarioSelecionado, nivel_acesso: novoNivel });
         void carregarDadosIniciais();
+      } else {
+        const dados = await resposta.json();
+        mostrarDialogo('Erro', dados.erro || 'Não foi possível alterar o nível de acesso.');
       }
     } catch { mostrarDialogo('Erro', 'Falha na conexão.'); }
   };
@@ -138,6 +150,12 @@ export default function TelaUsuariosCongregacao() {
 
   const podeGerenciar = canManage(usuarioLogado);
   const ehMaster = podeGerenciar && usuarioLogado?.nivel_acesso === 'MASTER';
+  const outraConta = !!usuarioSelecionado && usuarioSelecionado.id !== usuarioLogado?.id;
+  const podeAlterarStatus = podeGerenciar && outraConta && (ehMaster || (
+    usuarioSelecionado.nivel_acesso === 'MEMBRO' && usuarioSelecionado.congregacao_id === usuarioLogado?.congregacao_id
+  ));
+  const podeAlterarNivel = ehMaster && outraConta;
+  const niveisDisponiveis = usuarioSelecionado?.status_conta === 'APROVADO' ? ['MEMBRO', 'ADMIN', 'MASTER'] : ['MEMBRO'];
 
   return (
     <View style={styles.container}>
@@ -148,7 +166,7 @@ export default function TelaUsuariosCongregacao() {
           <Ionicons name="arrow-back" size={24} color="#F7F5EC" />
         </TouchableOpacity>
         <Text style={styles.headerTitle} numberOfLines={1}>
-          {congregacaoNome}
+          {nomeCongregacao ?? 'Usuários da congregação'}
         </Text>
       </View>
 
@@ -207,16 +225,16 @@ export default function TelaUsuariosCongregacao() {
               <Text style={styles.detalhesInfo}>🛡️ Status: {usuarioSelecionado?.status_conta}</Text>
             </View>
 
-            {podeGerenciar && <View style={styles.actionsRow}>
-              <TouchableOpacity 
+            {(podeAlterarStatus || podeAlterarNivel) && <View style={styles.actionsRow}>
+              {podeAlterarStatus && <TouchableOpacity
                 style={[styles.actionButton, !ehMaster && { width: '100%', flex: undefined }]} 
                 onPress={() => setModalStatusVisivel(true)}
               >
                 <Ionicons name="shield-checkmark" size={16} color="#2A4B4C" />
                 <Text style={styles.actionText}>Aprovar/Status</Text>
-              </TouchableOpacity>
+              </TouchableOpacity>}
 
-              {ehMaster && (
+              {podeAlterarNivel && (
                 <TouchableOpacity style={styles.actionButton} onPress={() => setModalNivelVisivel(true)}>
                   <Ionicons name="star" size={16} color="#2A4B4C" />
                   <Text style={styles.actionText}>Mudar Nível</Text>
@@ -228,7 +246,7 @@ export default function TelaUsuariosCongregacao() {
       </Modal>
 
       {/* Modal de Status */}
-      <Modal transparent={true} visible={modalStatusVisivel} animationType="fade">
+      <Modal transparent={true} visible={modalStatusVisivel && podeAlterarStatus} animationType="fade">
         <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setModalStatusVisivel(false)}>
           <View style={styles.modalContent}>
             <Text style={styles.modalTitle}>Alterar Status</Text>
@@ -242,12 +260,12 @@ export default function TelaUsuariosCongregacao() {
       </Modal>
 
       {/* Modal de Nível (Apenas Master) */}
-      {ehMaster && (
+      {podeAlterarNivel && (
         <Modal transparent={true} visible={modalNivelVisivel} animationType="fade">
           <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={() => setModalNivelVisivel(false)}>
             <View style={styles.modalContent}>
               <Text style={styles.modalTitle}>Promover/Rebaixar</Text>
-              {['MEMBRO', 'ADMIN', 'MASTER'].map((nivel) => (
+            {niveisDisponiveis.map((nivel) => (
                 <TouchableOpacity key={nivel} style={styles.modalOption} onPress={() => alterarNivel(nivel)}>
                   <Text style={styles.modalOptionText}>{nivel}</Text>
                 </TouchableOpacity>
