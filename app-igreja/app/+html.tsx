@@ -19,6 +19,13 @@ export default function Root({ children }: PropsWithChildren) {
         <link rel="apple-touch-icon" sizes="180x180" href="/pwa/icon-180.png" />
         <script src="/pwa-register.js" defer />
         <ScrollViewStyleReset />
+        <style>{`
+          :where(a, button, input, textarea, [tabindex], [role="button"], [role="radio"], [role="tab"]):focus-visible {
+            outline: 2px solid #2A4B4C !important;
+            outline-offset: -2px;
+            box-shadow: inset 0 0 0 4px #F7F5EC !important;
+          }
+        `}</style>
         {headNodes}
       </head>
       <body {...bodyAttributes}>

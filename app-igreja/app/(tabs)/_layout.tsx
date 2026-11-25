@@ -3,10 +3,11 @@ import { Animated, Easing, Platform, StyleSheet, View, useWindowDimensions } fro
 import { Tabs, useSegments } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
+import { useReducedMotion } from '@/hooks/use-reduced-motion';
 
 const VERDE = '#2A4B4C';
 const BEGE = '#F7F5EC';
-const CINZA = '#a3a3a3';
+const CINZA = '#5F6965';
 const DURACAO_TRANSICAO = 270;
 const LARGURA_INDICADOR = 32;
 const suavizacao = Easing.inOut(Easing.cubic);
@@ -19,7 +20,7 @@ type NomeIcone = keyof typeof Ionicons.glyphMap;
 // O indicador animado é apenas um fundo do tabBar, não um novo BottomTabBar.
 const DirecaoTransicao = createContext(0);
 
-function IconeAba({ nome, cor, selecionado }: { nome: NomeIcone; cor: string; selecionado: boolean }) {
+function IconeAba({ nome, cor, selecionado, reduzirMovimento }: { nome: NomeIcone; cor: string; selecionado: boolean; reduzirMovimento: boolean }) {
   const direcao = useContext(DirecaoTransicao);
   const [deslocamento] = useState(() => new Animated.Value(0));
   const selecionadoAnterior = useRef(selecionado);
@@ -27,10 +28,10 @@ function IconeAba({ nome, cor, selecionado }: { nome: NomeIcone; cor: string; se
   useEffect(() => {
     if (selecionado && !selecionadoAnterior.current) {
       deslocamento.stopAnimation();
-      deslocamento.setValue(direcao * 8);
+      deslocamento.setValue(reduzirMovimento ? 0 : direcao * 8);
       Animated.timing(deslocamento, {
         toValue: 0,
-        duration: DURACAO_TRANSICAO,
+        duration: reduzirMovimento ? 0 : DURACAO_TRANSICAO,
         easing: suavizacao,
         useNativeDriver: usarDriverNativo,
       }).start();
@@ -39,7 +40,7 @@ function IconeAba({ nome, cor, selecionado }: { nome: NomeIcone; cor: string; se
       deslocamento.setValue(0);
     }
     selecionadoAnterior.current = selecionado;
-  }, [deslocamento, direcao, selecionado]);
+  }, [deslocamento, direcao, reduzirMovimento, selecionado]);
 
   return (
     <Animated.View style={{ transform: [{ translateX: deslocamento }] }}>
@@ -48,7 +49,7 @@ function IconeAba({ nome, cor, selecionado }: { nome: NomeIcone; cor: string; se
   );
 }
 
-function FundoBarraAnimado({ indiceAtual }: { indiceAtual: number }) {
+function FundoBarraAnimado({ indiceAtual, reduzirMovimento }: { indiceAtual: number; reduzirMovimento: boolean }) {
   const { bottom } = useSafeAreaInsets();
   const [largura, setLargura] = useState(0);
   const [progresso] = useState(() => new Animated.Value(indiceAtual));
@@ -60,11 +61,11 @@ function FundoBarraAnimado({ indiceAtual }: { indiceAtual: number }) {
     progresso.stopAnimation();
     Animated.timing(progresso, {
       toValue: indiceAtual,
-      duration: DURACAO_TRANSICAO,
+      duration: reduzirMovimento ? 0 : DURACAO_TRANSICAO,
       easing: suavizacao,
       useNativeDriver: usarDriverNativo,
     }).start();
-  }, [progresso, indiceAtual]);
+  }, [progresso, indiceAtual, reduzirMovimento]);
 
   const centros = ordemAbas.map((_, indice) =>
     (indice + 0.5) * largura / ordemAbas.length - LARGURA_INDICADOR / 2,
@@ -102,6 +103,7 @@ function FundoBarraAnimado({ indiceAtual }: { indiceAtual: number }) {
 
 export default function TabLayout() {
   const { width: larguraTela } = useWindowDimensions();
+  const reduzirMovimento = useReducedMotion();
   const segmentos = useSegments();
   const nomeAtual = segmentos[segmentos.length - 1] as NomeAba | undefined;
   const posicao = ordemAbas.indexOf(nomeAtual as NomeAba);
@@ -121,11 +123,11 @@ export default function TabLayout() {
           tabBarInactiveTintColor: CINZA,
           headerShown: false,
           tabBarStyle: { backgroundColor: BEGE },
-          tabBarBackground: () => <FundoBarraAnimado indiceAtual={indiceAtual} />,
+          tabBarBackground: () => <FundoBarraAnimado indiceAtual={indiceAtual} reduzirMovimento={reduzirMovimento} />,
           // Transição carrossel: direção baseada na ordem das abas.
           transitionSpec: {
             animation: 'timing',
-            config: { duration: DURACAO_TRANSICAO, easing: suavizacao },
+            config: { duration: reduzirMovimento ? 0 : DURACAO_TRANSICAO, easing: suavizacao },
           },
           sceneStyleInterpolator: ({ current }) => ({
             sceneStyle: {
@@ -145,7 +147,7 @@ export default function TabLayout() {
             title: 'Agenda',
             tabBarAccessibilityLabel: 'Agenda',
             tabBarIcon: ({ color, focused }) =>
-              <IconeAba nome="calendar" cor={typeof color === 'string' ? color : CINZA} selecionado={focused} />,
+              <IconeAba nome="calendar" cor={typeof color === 'string' ? color : CINZA} selecionado={focused} reduzirMovimento={reduzirMovimento} />,
           }}
         />
         <Tabs.Screen
@@ -154,7 +156,7 @@ export default function TabLayout() {
             title: 'Eventos',
             tabBarAccessibilityLabel: 'Eventos',
             tabBarIcon: ({ color, focused }) =>
-              <IconeAba nome="megaphone" cor={typeof color === 'string' ? color : CINZA} selecionado={focused} />,
+              <IconeAba nome="megaphone" cor={typeof color === 'string' ? color : CINZA} selecionado={focused} reduzirMovimento={reduzirMovimento} />,
           }}
         />
         <Tabs.Screen
@@ -163,7 +165,7 @@ export default function TabLayout() {
             title: 'Perfil',
             tabBarAccessibilityLabel: 'Perfil',
             tabBarIcon: ({ color, focused }) =>
-              <IconeAba nome="person" cor={typeof color === 'string' ? color : CINZA} selecionado={focused} />,
+              <IconeAba nome="person" cor={typeof color === 'string' ? color : CINZA} selecionado={focused} reduzirMovimento={reduzirMovimento} />,
           }}
         />
       </Tabs>

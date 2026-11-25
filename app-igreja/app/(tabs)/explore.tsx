@@ -1,8 +1,11 @@
 import { useAppDialog } from '@/components/app-dialog';
 import { apiUrl, apiFetch, authenticatedFetch, canInteract, canManage, isGuestMode, refreshSession } from '@/services/session';
 import { useSessionUser } from '@/hooks/use-session-user';
+import { useMuralInteresses } from '@/hooks/use-mural-interesses';
+import { useReducedMotion } from '@/hooks/use-reduced-motion';
+import { filtrarInteresses } from '@/services/mural-interesses';
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, TextInput, Modal, ActivityIndicator, Dimensions, FlatList, RefreshControl, StatusBar, BackHandler, PixelRatio, Platform } from 'react-native';
+import { StyleSheet, Text, View, Image, TouchableOpacity, ScrollView, TextInput, Modal, ActivityIndicator, FlatList, RefreshControl, StatusBar, BackHandler, PixelRatio, Platform, useWindowDimensions } from 'react-native';
 import { router, useFocusEffect, useNavigation } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { Image as ExpoImage, type ImageLoadEventData } from 'expo-image';
@@ -10,16 +13,13 @@ import { imageAspectRatio, optimizedMuralUrl } from '@/services/mural-image';
 import { filtrarPublicacoes, podeFiltrarCongregacao, type FiltroMural } from '@/services/mural-feed';
 import { indiceValido, limitarIndice, indicePorDeslocamento } from '@/services/mural-navigation';
 
-// Altura da janela usada apenas como valor inicial; no fullscreen a altura real é medida via onLayout
-const { height } = Dimensions.get('window');
-
 // Compatibilidade com URLs temporárias relativas da API e imagens antigas em Data URI.
 const origemImagem = (valor: string) => valor.startsWith('/') ? apiUrl(valor) : valor;
 
 // Limita o cache de proporções às últimas 100 imagens, sem cache persistente de links assinados.
 const proporcoesCache = new Map<number, { uri: string; razao: number }>();
 
-const ImagemMural = React.memo(function ImagemMural({ postId, uri, fullscreen = false }: { postId: number; uri: string; fullscreen?: boolean }) {
+const ImagemMural = React.memo(function ImagemMural({ postId, uri, titulo, fullscreen = false }: { postId: number; uri: string; titulo: string; fullscreen?: boolean }) {
   const otimizada = optimizedMuralUrl(uri);
   const [fallback, setFallback] = useState(false);
   const [medida, setMedida] = useState<number>();
@@ -38,6 +38,8 @@ const ImagemMural = React.memo(function ImagemMural({ postId, uri, fullscreen = 
 
   const imagem = <ExpoImage
     source={{ uri: fonte }}
+    alt={`Imagem da publicação: ${titulo}`}
+    accessibilityLabel={`Imagem da publicação: ${titulo}`}
     style={fullscreen ? styles.fullscreenImage : styles.mediaContentFeed}
     contentFit="contain"
     cachePolicy={otimizada !== uri ? 'memory-disk' : 'none'}
@@ -45,34 +47,52 @@ const ImagemMural = React.memo(function ImagemMural({ postId, uri, fullscreen = 
     onLoad={onLoad}
     onError={() => { if (!fallback && otimizada !== uri) setFallback(true); }}
   />;
-  return fullscreen ? imagem : <View style={[styles.mediaImagemFeed, { aspectRatio: razao }]}>{imagem}</View>;
+  return fullscreen ? imagem : <View testID={`mural-imagem-${postId}`} style={[styles.mediaImagemFeed, { aspectRatio: razao }]}>{imagem}</View>;
 });
 
 export default function TelaEventos() {
   const { alert: mostrarDialogo } = useAppDialog();
+  const { height: alturaJanela } = useWindowDimensions();
+  const reduzirMovimento = useReducedMotion();
   const [posts, setPosts] = useState<any[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [erroCarregamento, setErroCarregamento] = useState('');
-  
+  const requisicaoMural = useRef<AbortController | null>(null);
+
   const [usuarioLogado, setUsuarioLogado] = useSessionUser();
   const [convidado, setConvidado] = useState(false);
-  const [filtro, setFiltro] = useState<FiltroMural>('todos');
+
+  const {
+    permitido: podeMarcarInteresse,
+    estado: estadoInteresses,
+    alternar: alternarInteresse,
+    carregar: carregarInteresses,
+  } = useMuralInteresses(usuarioLogado, convidado);
+  const [filtro, setFiltro] = useState<FiltroMural | 'interesses'>('todos');
   const [menuPostId, setMenuPostId] = useState<number | null>(null);
 
   // Controle do modo Fullscreen e navegação por slides
   const [modoFullscreen, setModoFullscreen] = useState(false);
+  const [indiceAcessivel, setIndiceAcessivel] = useState(0);
+  const [anuncioInteresses, setAnuncioInteresses] = useState('');
+  const origemFullscreen = useRef<string | null>(null);
+  const focarProximoSlide = useRef(false);
   const [indiceInicial, setIndiceInicial] = useState(0);
   const flatListRef = useRef<FlatList>(null);
   const navigation = useNavigation();
 
   // Medidas reais da área do fullscreen (cada slide ocupa exatamente uma "página")
-  const [alturaPagina, setAlturaPagina] = useState(height);
+  const [alturaPagina, setAlturaPagina] = useState(alturaJanela);
   const [fullscreenMedido, setFullscreenMedido] = useState(false);
   // Na Web, o onLayout inicial pode não disparar quando a camada é absoluta.
   // A lista já pode usar a altura inicial da janela sem aguardar essa medição.
   // Índice do slide visível (usado como ponto de partida ao abrir e se a lista precisar ser recriada)
   const indiceAtualRef = useRef(0);
+  const timerEncaixeWeb = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const alturaInicialWebRef = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => clearTimeout(timerEncaixeWeb.current), [modoFullscreen, alturaPagina]);
 
   // Estados dos Modais e Interações
   const [modalComentariosVisivel, setModalComentariosVisivel] = useState(false);
@@ -104,26 +124,28 @@ export default function TelaEventos() {
     return () => backHandler.remove();
   }, [modoFullscreen]);
 
-  // Oculta completamente a barra inferior de navegação do aplicativo ao entrar no modo Fullscreen
   useEffect(() => {
-    const parentNav = navigation.getParent();
-    if (parentNav) {
-      parentNav.setOptions({
-        tabBarStyle: { display: modoFullscreen ? 'none' : 'flex' }
-      });
-    }
+    if (!modoFullscreen) return;
+    navigation.setOptions({ tabBarStyle: { display: 'none' } });
+    return () => navigation.setOptions({ tabBarStyle: { backgroundColor: '#F7F5EC' } });
   }, [modoFullscreen, navigation]);
 
-  const buscarPosts = useCallback(async (isRefresh = false) => {
+  const buscarPosts = useCallback(async () => {
+    requisicaoMural.current?.abort();
+    const controle = new AbortController();
+    requisicaoMural.current = controle;
+    const { signal } = controle;
     // Mantem os eventos visiveis ao retornar para a aba.
     setErroCarregamento('');
     try {
       const modoConvidado = await isGuestMode();
+      if (signal.aborted) return;
       const resposta = modoConvidado
-        ? await apiFetch('/publico/mural')
-        : await authenticatedFetch('/mural?midia=link');
+        ? await apiFetch('/publico/mural', { signal })
+        : await authenticatedFetch('/mural?midia=link', { signal });
       if (resposta.ok) {
         const dados = await resposta.json();
+        if (signal.aborted) return;
         setPosts(dados);
 
         const mapCurtidas: { [key: number]: { total: number, curtiu: boolean } } = {};
@@ -133,13 +155,16 @@ export default function TelaEventos() {
         setPostsCurtidas(mapCurtidas);
       } else {
         const dados = await resposta.json().catch(() => ({}));
-        setErroCarregamento(dados.erro || 'Não foi possível carregar as publicações.');
+        if (!signal.aborted) setErroCarregamento(dados.erro || 'Não foi possível carregar as publicações.');
       }
     } catch {
-      setErroCarregamento('Falha de conexão. Verifique sua internet e tente novamente.');
+      if (!signal.aborted) setErroCarregamento('Falha de conexão. Verifique sua internet e tente novamente.');
     } finally {
-      if (!isRefresh) setCarregando(false);
-      setRefreshing(false);
+      if (requisicaoMural.current === controle) {
+        requisicaoMural.current = null;
+        setCarregando(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
@@ -160,35 +185,109 @@ export default function TelaEventos() {
           setUsuarioLogado(usuario);
         }
 
-        if (ativo) await buscarPosts(false);
+        if (ativo) await buscarPosts();
       } catch {
-        if (ativo) setErroCarregamento('Falha de conexão. Verifique sua internet e tente novamente.');
+        if (ativo) {
+          setErroCarregamento('Falha de conexão. Verifique sua internet e tente novamente.');
+          setCarregando(false);
+          setRefreshing(false);
+        }
       }
     })();
-    return () => { ativo = false; };
+    return () => {
+      ativo = false;
+      const pendente = requisicaoMural.current;
+      requisicaoMural.current = null;
+      pendente?.abort();
+    };
   }, [buscarPosts, setUsuarioLogado]));
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    void buscarPosts(true);
-  }, [buscarPosts]);
+    void buscarPosts();
+    void carregarInteresses();
+  }, [buscarPosts, carregarInteresses]);
 
   const podeInteragir = !convidado && canInteract(usuarioLogado);
 
   const congregacaoId = usuarioLogado?.congregacao_id;
   const filtroDisponivel = podeFiltrarCongregacao(congregacaoId, convidado);
-  const filtroAtivo = filtroDisponivel ? filtro : 'todos';
+  const filtroAtivo = filtro === 'interesses'
+    ? (podeMarcarInteresse ? 'interesses' : 'todos')
+    : (filtroDisponivel ? filtro : 'todos');
 
   const postsVisiveis = React.useMemo(
-    () => filtrarPublicacoes(posts, filtroAtivo, congregacaoId, convidado),
-    [posts, filtroAtivo, congregacaoId, convidado]
+    () => filtroAtivo === 'interesses'
+      ? filtrarInteresses(
+          posts,
+          estadoInteresses.ids,
+          podeMarcarInteresse && estadoInteresses.pronto
+        )
+      : filtrarPublicacoes(
+          posts,
+          filtroAtivo,
+          congregacaoId,
+          convidado
+        ),
+    [
+      posts,
+      filtroAtivo,
+      congregacaoId,
+      convidado,
+      estadoInteresses.ids,
+      estadoInteresses.pronto,
+      podeMarcarInteresse
+    ]
   );
+  const slideAcessivel = postsVisiveis[indiceAcessivel]?.id;
+
+  useEffect(() => {
+    if (Platform.OS !== 'web') return;
+    const quadro = requestAnimationFrame(() => {
+      if (modoFullscreen && focarProximoSlide.current) {
+        const voltar = document.querySelector<HTMLElement>(
+          `[data-testid="mural-slide-${slideAcessivel}"] [data-testid="voltar-fullscreen"]`
+        );
+        if (voltar) {
+          voltar.focus({ preventScroll: true });
+          focarProximoSlide.current = false;
+        }
+      } else if (!modoFullscreen && origemFullscreen.current) {
+        const origem = document.querySelector<HTMLElement>(`[data-testid="${origemFullscreen.current}"]`);
+        const filtro = filtroAtivo === 'interesses' ? 'filtro-interesses' : 'filtro-todos';
+        (origem ?? document.querySelector<HTMLElement>(`[data-testid="${filtro}"]`))?.focus();
+        origemFullscreen.current = null;
+      }
+    });
+    return () => cancelAnimationFrame(quadro);
+  }, [filtroAtivo, modoFullscreen, slideAcessivel]);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !modoFullscreen || modalComentariosVisivel) return;
+    const navegar = (evento: KeyboardEvent) => {
+      if (evento.key === 'Escape') {
+        evento.preventDefault();
+        setModoFullscreen(false);
+      } else if (evento.key === 'ArrowUp' || evento.key === 'ArrowDown') {
+        evento.preventDefault();
+        const proximo = limitarIndice(indiceAtualRef.current + (evento.key === 'ArrowUp' ? -1 : 1), postsVisiveis.length);
+        if (proximo === indiceAtualRef.current) return;
+        focarProximoSlide.current = true;
+        indiceAtualRef.current = proximo;
+        setIndiceAcessivel(proximo);
+        flatListRef.current?.scrollToOffset({ offset: proximo * alturaPagina, animated: false });
+      }
+    };
+    window.addEventListener('keydown', navegar);
+    return () => window.removeEventListener('keydown', navegar);
+  }, [alturaPagina, modalComentariosVisivel, modoFullscreen, postsVisiveis.length]);
 
   // Reinicia a selecao quando o contexto da sessao muda.
   const contextoFiltro = JSON.stringify([
     usuarioLogado?.id ?? null,
     congregacaoId ?? null,
-    convidado
+    convidado,
+    podeMarcarInteresse
   ]);
 
   const [contextoAnterior, setContextoAnterior] = useState(contextoFiltro);
@@ -199,12 +298,14 @@ export default function TelaEventos() {
     setFiltro('todos');
     setModoFullscreen(false);
     setIndiceInicial(0);
+    setAnuncioInteresses('');
   } else if (modoFullscreen && postsVisiveis.length === 0) {
     setModoFullscreen(false);
     setIndiceInicial(0);
   }
 
-  const alterarFiltro = (novoFiltro: FiltroMural) => {
+  const alterarFiltro = (novoFiltro: FiltroMural | 'interesses') => {
+    if (novoFiltro === 'interesses' && !podeMarcarInteresse) return;
     setMenuPostId(null);
     setFiltro(novoFiltro);
     setModoFullscreen(false);
@@ -424,12 +525,36 @@ export default function TelaEventos() {
   const postMenu = postsVisiveis.find(post => post.id === menuPostId);
   const menuDisponivel = !!postMenu && podeExcluirPost(postMenu);
 
-  const abrirFullscreenNoPost = (index: number) => {
+  const abrirFullscreenNoPost = (index: number, origem: string) => {
     setMenuPostId(null);
     if (!indiceValido(index, postsVisiveis.length)) return;
     indiceAtualRef.current = index;
+    origemFullscreen.current = origem;
+    focarProximoSlide.current = true;
+    setIndiceAcessivel(index);
+    alturaInicialWebRef.current = undefined;
     setIndiceInicial(index);
+    if (Platform.OS === 'web') setAlturaPagina(alturaJanela);
     setModoFullscreen(true);
+  };
+
+  const alterarInteresse = async (id: number) => {
+    const remover = estadoInteresses.ids.includes(id);
+    if (filtroAtivo === 'interesses' && remover) {
+      const perdeuFoco = Platform.OS === 'web' && document.activeElement?.getAttribute('data-testid') === `interesse-feed-${id}`;
+      setAnuncioInteresses('');
+      if (await alternarInteresse(id)) setAnuncioInteresses('Interesse removido.');
+      if (perdeuFoco && document.activeElement === document.body) {
+        document.querySelector<HTMLElement>('[data-testid="filtro-interesses"]')?.focus();
+      }
+    } else {
+      await alternarInteresse(id);
+    }
+  };
+
+  const tentarCarregarInteresses = async () => {
+    setAnuncioInteresses('Carregando seus interesses.');
+    setAnuncioInteresses(await carregarInteresses() ? 'Interesses atualizados.' : '');
   };
 
   // Renderização da lista principal (feed tradicional)
@@ -443,7 +568,7 @@ export default function TelaEventos() {
     const totalCurtidas = Math.max(0, Number(curInfo.total) || 0);
 
     return (
-      <View style={[
+      <View testID={`mural-card-${post.id}`} style={[
         styles.postCard,
         Platform.OS === 'web' && styles.postCardWeb
       ]}>
@@ -500,7 +625,8 @@ export default function TelaEventos() {
         {post.midia ? (
           <TouchableOpacity
             activeOpacity={0.96}
-            onPress={() => abrirFullscreenNoPost(index)}
+            testID={`mural-ampliar-${post.id}`}
+            onPress={() => abrirFullscreenNoPost(index, `mural-ampliar-${post.id}`)}
             accessibilityRole="button"
             accessibilityLabel={`Ampliar publicação: ${post.titulo}`}
           >
@@ -519,6 +645,7 @@ export default function TelaEventos() {
               <ImagemMural
                 key={post.midia}
                 postId={post.id}
+                titulo={post.titulo}
                 uri={origemImagem(post.midia)}
               />
             )}
@@ -532,11 +659,11 @@ export default function TelaEventos() {
               onPress={() => curtirPost(post.id)}
               accessibilityRole="button"
               accessibilityLabel={
-                curInfo.curtiu
+                Platform.OS !== 'web' && curInfo.curtiu
                   ? 'Remover curtida'
                   : 'Curtir publicação'
               }
-              accessibilityState={{ selected: !!curInfo.curtiu }}
+              {...(Platform.OS === 'web' ? { 'aria-pressed': !!curInfo.curtiu } : { accessibilityState: { selected: !!curInfo.curtiu } })}
             >
               <Ionicons
                 name={curInfo.curtiu ? 'heart' : 'heart-outline'}
@@ -558,6 +685,51 @@ export default function TelaEventos() {
               color="#2A4B4C"
             />
           </TouchableOpacity>
+
+          {podeMarcarInteresse && (
+            <TouchableOpacity
+              style={[
+                styles.postIconButton,
+                styles.interesseBotao,
+                (!estadoInteresses.pronto ||
+                  estadoInteresses.carregando ||
+                  estadoInteresses.pendente !== null) &&
+                  styles.interesseDesabilitado
+              ]}
+              disabled={
+                !estadoInteresses.pronto ||
+                estadoInteresses.carregando ||
+                estadoInteresses.pendente !== null
+              }
+              onPress={() => void alterarInteresse(post.id)}
+              accessibilityRole="button"
+              accessibilityLabel={
+                Platform.OS === 'web' ? 'Interesse na publicação' : estadoInteresses.ids.includes(post.id)
+                  ? 'Remover interesse'
+                  : 'Tenho interesse'
+              }
+              aria-busy={estadoInteresses.pendente === post.id}
+              {...(Platform.OS === 'web' ? { 'aria-pressed': estadoInteresses.ids.includes(post.id) } : {})}
+              accessibilityState={{
+                selected: Platform.OS === 'web' ? undefined : estadoInteresses.ids.includes(post.id),
+                disabled:
+                  !estadoInteresses.pronto ||
+                  estadoInteresses.carregando ||
+                  estadoInteresses.pendente !== null,
+              }}
+              testID={`interesse-feed-${post.id}`}
+            >
+              <Ionicons
+                name={
+                  estadoInteresses.ids.includes(post.id)
+                    ? 'bookmark'
+                    : 'bookmark-outline'
+                }
+                size={26}
+                color="#2A4B4C"
+              />
+            </TouchableOpacity>
+          )}
         </View>
 
         <View style={styles.postInfoBox}>
@@ -569,7 +741,8 @@ export default function TelaEventos() {
 
           <TouchableOpacity
             activeOpacity={0.9}
-            onPress={() => abrirFullscreenNoPost(index)}
+            testID={`mural-abrir-${post.id}`}
+            onPress={() => abrirFullscreenNoPost(index, `mural-abrir-${post.id}`)}
             accessibilityRole="button"
             accessibilityLabel={`Abrir publicação: ${post.titulo}`}
           >
@@ -599,12 +772,14 @@ export default function TelaEventos() {
   };
 
   // Renderização do Slide Fullscreen Individual (Estilo Reels/TikTok limpo)
-  const renderPostFullscreen = ({ item: post }: { item: any }) => {
+  const renderPostFullscreen = ({ item: post, index }: { item: any; index: number }) => {
     const curInfo = postsCurtidas[post.id] || { total: post.totalCurtidas, curtiu: post.curtiuPorMim };
     const autorFoto = post.autor_foto;
 
     return (
-      <View style={[styles.fullscreenSlide, { height: alturaPagina }]}>
+      <View testID={`mural-slide-${post.id}`} aria-hidden={indiceAcessivel !== index}
+        importantForAccessibility={indiceAcessivel === index ? 'auto' : 'no-hide-descendants'}
+        style={[styles.fullscreenSlide, { height: alturaPagina }]}>
         {/* Camada de Mídia Principal (Ocupa 100% da página; a foto é exibida inteira, sem cortes nem distorção) */}
         <View style={styles.fullscreenMediaLayer}>
           {post.midia ? (
@@ -614,7 +789,7 @@ export default function TelaEventos() {
                 <Text style={styles.videoTextLarge}>Vídeo indisponível nesta versão</Text>
               </View>
             ) : (
-              <ImagemMural key={post.midia} postId={post.id} uri={origemImagem(post.midia)} fullscreen />
+              <ImagemMural key={post.midia} postId={post.id} titulo={post.titulo} uri={origemImagem(post.midia)} fullscreen />
             )
           ) : (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 }}>
@@ -624,27 +799,101 @@ export default function TelaEventos() {
         </View>
 
         {/* Botão de Voltar Flutuante no Topo Esquerdo */}
-        <TouchableOpacity style={styles.backFullscreenBtn} onPress={() => setModoFullscreen(false)}>
+        <TouchableOpacity
+          style={styles.backFullscreenBtn}
+          focusable={indiceAcessivel === index}
+          onPress={() => setModoFullscreen(false)}
+          accessibilityRole="button"
+          accessibilityLabel="Voltar para publicações"
+          testID="voltar-fullscreen"
+        >
           <Ionicons name="arrow-back" size={26} color="#fff" />
         </TouchableOpacity>
 
         {/* Ícones Flutuantes na Lateral Direita */}
-        <View style={styles.floatingRightControls}>
-          {podeInteragir && <TouchableOpacity style={styles.floatingActionClean} onPress={() => curtirPost(post.id)} accessibilityRole="button" accessibilityLabel="Curtir publicação">
-            <Ionicons name={curInfo.curtiu ? "heart" : "heart-outline"} size={36} color={curInfo.curtiu ? "#E63946" : "#fff"} style={styles.dropShadow} />
+        <View style={[styles.floatingRightControls, alturaPagina < 500 && styles.floatingRightControlsCompact]}>
+          {podeInteragir && <TouchableOpacity style={styles.floatingActionClean} onPress={() => curtirPost(post.id)} focusable={indiceAcessivel === index}
+            accessibilityRole="button" accessibilityLabel={Platform.OS !== 'web' && curInfo.curtiu ? 'Remover curtida' : 'Curtir publicação'}
+            {...(Platform.OS === 'web' ? { 'aria-pressed': !!curInfo.curtiu } : { accessibilityState: { selected: !!curInfo.curtiu } })}>
+            <Ionicons name={curInfo.curtiu ? "heart" : "heart-outline"} size={24} color={curInfo.curtiu ? "#FF8089" : "#fff"} style={styles.dropShadow} />
             <Text style={[styles.floatingTextClean, styles.dropShadowText]}>{curInfo.total}</Text>
           </TouchableOpacity>}
 
-          <TouchableOpacity style={styles.floatingActionClean} onPress={() => abrirComentarios(post.id)} accessibilityRole="button" accessibilityLabel="Ver comentários">
-            <Ionicons name="chatbubble-outline" size={32} color="#fff" style={styles.dropShadow} />
+          <TouchableOpacity style={styles.floatingActionClean} onPress={() => abrirComentarios(post.id)} focusable={indiceAcessivel === index} accessibilityRole="button" accessibilityLabel="Ver comentários">
+            <Ionicons name="chatbubble-outline" size={24} color="#fff" style={styles.dropShadow} />
             <Text style={[styles.floatingTextClean, styles.dropShadowText]}>{podeInteragir ? 'Comentar' : 'Comentários'}</Text>
           </TouchableOpacity>
+
+          {podeMarcarInteresse && (
+            <TouchableOpacity
+              focusable={indiceAcessivel === index}
+              style={[
+                styles.floatingActionClean,
+                styles.interesseFullscreen,
+                (!estadoInteresses.pronto ||
+                  estadoInteresses.carregando ||
+                  estadoInteresses.pendente !== null) &&
+                  styles.interesseDesabilitado
+              ]}
+              disabled={
+                !estadoInteresses.pronto ||
+                estadoInteresses.carregando ||
+                estadoInteresses.pendente !== null
+              }
+              onPress={() => {
+                if (filtroAtivo === 'interesses') {
+                  setModoFullscreen(false);
+                  setIndiceInicial(0);
+                  indiceAtualRef.current = 0;
+                }
+
+                void alterarInteresse(post.id);
+              }}
+              accessibilityRole="button"
+              accessibilityLabel={
+                Platform.OS === 'web' ? 'Interesse na publicação' : estadoInteresses.ids.includes(post.id)
+                  ? 'Remover interesse'
+                  : 'Tenho interesse'
+              }
+              aria-busy={estadoInteresses.pendente === post.id}
+              {...(Platform.OS === 'web' ? { 'aria-pressed': estadoInteresses.ids.includes(post.id) } : {})}
+              accessibilityState={{
+                selected: Platform.OS === 'web' ? undefined : estadoInteresses.ids.includes(post.id),
+                disabled:
+                  !estadoInteresses.pronto ||
+                  estadoInteresses.carregando ||
+                  estadoInteresses.pendente !== null,
+              }}
+              testID={`interesse-fullscreen-${post.id}`}
+            >
+              <Ionicons
+                name={
+                  estadoInteresses.ids.includes(post.id)
+                    ? 'bookmark'
+                    : 'bookmark-outline'
+                }
+                size={24}
+                color="#FFFFFF"
+                style={styles.dropShadow}
+              />
+              <Text style={[
+                styles.floatingTextClean,
+                styles.dropShadowText
+              ]}>
+                {estadoInteresses.ids.includes(post.id)
+                  ? 'Marcado'
+                  : 'Interesse'}
+              </Text>
+            </TouchableOpacity>
+          )}
+
+
         </View>
 
         {/* Nome do Autor e Legenda no Rodapé */}
-        <View style={styles.fullscreenFooterClean}>
-          <TouchableOpacity 
-            style={styles.authorRowFooter} 
+        <View testID="mural-legenda-fullscreen" style={[styles.fullscreenFooterClean, alturaPagina < 500 && styles.fullscreenFooterCompact]}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel={`Perfil de ${post.autor}`} disabled={convidado} focusable={indiceAcessivel === index}
+            style={styles.authorRowFooter}
             onPress={() => { setModoFullscreen(false); if (!convidado) router.push({ pathname: '/perfil-publico', params: { id: post.usuario_id } } as any); }}
           >
             {autorFoto ? (
@@ -657,8 +906,8 @@ export default function TelaEventos() {
             <Text style={[styles.authorNameFooter, styles.dropShadowText]}>{post.autor}</Text>
           </TouchableOpacity>
 
-          <Text style={[styles.fullscreenTitle, styles.dropShadowText]}>{post.titulo}</Text>
-          {post.local ? <Text style={[styles.fullscreenLocal, styles.dropShadowText]}>📍 {post.local}</Text> : null}
+          <Text style={[styles.fullscreenTitle, styles.dropShadowText]} numberOfLines={2}>{post.titulo}</Text>
+          {post.local ? <Text style={[styles.fullscreenLocal, styles.dropShadowText]} numberOfLines={1}>📍 {post.local}</Text> : null}
           <Text style={[styles.fullscreenDesc, styles.dropShadowText]} numberOfLines={3}>{post.descricao}</Text>
         </View>
       </View>
@@ -666,7 +915,39 @@ export default function TelaEventos() {
   };
 
   // Se estiver em modo fullscreen, substitui a tela por uma camada independente acima de tudo
+  const avisoInteresses = podeMarcarInteresse && estadoInteresses.erro &&
+    estadoInteresses.pendente === null ? (
+      <TouchableOpacity
+        style={[styles.interesseAviso, modoFullscreen && styles.interesseAvisoFullscreen]}
+        onPress={() => void tentarCarregarInteresses()}
+        accessibilityRole="button"
+        accessibilityLabel="Atualizar interesses"
+      >
+        <Text style={styles.interesseAvisoTexto}>
+          {estadoInteresses.erro} Toque para atualizar.
+        </Text>
+      </TouchableOpacity>
+    ) : null;
+
+  const statusInteresses = (
+    <Text testID="status-interesses" style={styles.leitorTela}
+      aria-live="polite" aria-atomic accessibilityLiveRegion="polite">
+      {estadoInteresses.erro || anuncioInteresses}
+    </Text>
+  );
+
   if (modoFullscreen && postsVisiveis.length > 0) {
+    const indiceDeAbertura = limitarIndice(indiceInicial, postsVisiveis.length);
+    const encaixarSlide = (offsetY: number) => {
+      const indice = indicePorDeslocamento(offsetY, alturaPagina, postsVisiveis.length);
+      indiceAtualRef.current = indice;
+      setIndiceAcessivel(indice);
+      const alvo = indice * alturaPagina;
+      if (Math.abs(offsetY - alvo) > 1) {
+        flatListRef.current?.scrollToOffset({ offset: alvo, animated: !reduzirMovimento });
+      }
+    };
+
     return (
       <View
         style={styles.fullscreenWrapper}
@@ -686,10 +967,10 @@ export default function TelaEventos() {
             key={`fullscreen-${alturaPagina}`}
             ref={flatListRef}
             data={postsVisiveis}
-            extraData={postsCurtidas}
+            extraData={{ postsCurtidas, estadoInteresses, indiceAcessivel }}
             keyExtractor={(item) => item.id.toString()}
             renderItem={renderPostFullscreen}
-            pagingEnabled
+            pagingEnabled={Platform.OS !== 'web'}
             showsVerticalScrollIndicator={false}
             snapToInterval={alturaPagina}
             snapToAlignment="start"
@@ -697,43 +978,52 @@ export default function TelaEventos() {
             disableIntervalMomentum
             bounces={false}
             overScrollMode="never"
-            initialScrollIndex={limitarIndice(indiceInicial, postsVisiveis.length)}
+            // No navegador, renderiza também o vizinho anterior antes de saltar ao slide escolhido.
+            initialScrollIndex={Platform.OS === 'web' ? Math.max(0, indiceDeAbertura - 1) : indiceDeAbertura}
             getItemLayout={(data, index) => ({ length: alturaPagina, offset: alturaPagina * index, index })}
-            initialNumToRender={1}
+            initialNumToRender={Platform.OS === 'web' ? 3 : 1}
             maxToRenderPerBatch={2}
             windowSize={3}
-            onMomentumScrollEnd={(e) => {
-              // Registra o slide atual e garante que a lista nunca fique parada entre duas publicações
+            scrollEventThrottle={16}
+            onContentSizeChange={Platform.OS === 'web' ? () => {
+              if (alturaInicialWebRef.current === alturaPagina || !flatListRef.current) return;
+              alturaInicialWebRef.current = alturaPagina;
+              flatListRef.current.scrollToOffset({ offset: indiceDeAbertura * alturaPagina, animated: false });
+            } : undefined}
+            onMomentumScrollEnd={Platform.OS === 'web' ? undefined : e => encaixarSlide(e.nativeEvent.contentOffset.y)}
+            onScroll={Platform.OS === 'web' ? e => {
               const offsetY = e.nativeEvent.contentOffset.y;
-              const indice = indicePorDeslocamento(offsetY, alturaPagina, postsVisiveis.length);
-              indiceAtualRef.current = indice;
-              const alvo = indice * alturaPagina;
-              if (Math.abs(offsetY - alvo) > 1) {
-                flatListRef.current?.scrollToOffset({ offset: alvo, animated: true });
-              }
-            }}
+              // O snap obrigatório do navegador também alinha os espaços sem itens da lista virtualizada.
+              clearTimeout(timerEncaixeWeb.current);
+              timerEncaixeWeb.current = setTimeout(() => encaixarSlide(offsetY), 120);
+            } : undefined}
           />
         )}
 
+        {avisoInteresses}
+        {statusInteresses}
+
         {/* MODAL DE COMENTÁRIOS NO MODO FULLSCREEN */}
-        <Modal visible={modalComentariosVisivel} animationType="slide" transparent={true} onRequestClose={fecharComentarios}>
+        <Modal visible={modalComentariosVisivel} accessibilityLabel="Comentários" animationType={reduzirMovimento ? 'none' : Platform.OS === 'web' ? 'fade' : 'slide'} transparent={true} onRequestClose={fecharComentarios}>
           <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
+            <View testID="mural-modal-comentarios" style={styles.modalContent}>
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>{comentarioParaExcluir ? 'Excluir comentário' : 'Comentários'}</Text>
-                <TouchableOpacity onPress={fecharComentarios}>
+                <TouchableOpacity style={styles.postIconButton} onPress={fecharComentarios} accessibilityRole="button" accessibilityLabel="Fechar comentários">
                   <Ionicons name="close" size={24} color="#333" />
                 </TouchableOpacity>
               </View>
 
               {comentarioParaExcluir ? (
-                <View style={styles.confirmacaoComentario}>
+                <ScrollView style={styles.confirmacaoComentarioScroll} contentContainerStyle={styles.confirmacaoComentario}>
                   <View style={styles.confirmacaoComentarioIcone}>
                     <Ionicons name="trash-outline" size={25} color="#D84343" />
                   </View>
                   <Text style={styles.confirmacaoComentarioTitulo}>Excluir este comentário?</Text>
                   <Text style={styles.confirmacaoComentarioAutor}>{comentarioParaExcluir.autor}</Text>
-                  <Text style={styles.confirmacaoComentarioTrecho} numberOfLines={3}>{comentarioParaExcluir.texto}</Text>
+                  <View style={styles.confirmacaoComentarioTrecho}>
+                    <Text style={styles.confirmacaoComentarioTexto} numberOfLines={3}>{comentarioParaExcluir.texto}</Text>
+                  </View>
                   <Text style={styles.confirmacaoComentarioAviso}>
                     As respostas a este comentário também serão removidas.
                   </Text>
@@ -757,7 +1047,7 @@ export default function TelaEventos() {
                       </Text>
                     </TouchableOpacity>
                   </View>
-                </View>
+                </ScrollView>
               ) : (
                 <>
                   {erroComentario ? (
@@ -766,7 +1056,7 @@ export default function TelaEventos() {
                   {avisoComentario ? (
                     <Text accessibilityRole="alert" style={styles.avisoComentario}>{avisoComentario}</Text>
                   ) : null}
-                  <ScrollView style={{ maxHeight: 320, marginBottom: 15 }}>
+                  <ScrollView style={styles.listaComentarios}>
                 {comentarios.length === 0 ? (
                   <Text style={styles.emptyComentarios}>{podeInteragir ? 'Nenhum comentário ainda. Seja o primeiro a comentar!' : 'Nenhum comentário disponível.'}</Text>
                 ) : (
@@ -777,13 +1067,15 @@ export default function TelaEventos() {
                       <View key={c.id} style={[styles.comentarioItem, c.parent_id && { marginLeft: 25, borderLeftWidth: 2, borderLeftColor: '#2A4B4C', paddingLeft: 10 }]}>
                         <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2}}>
                           <Text style={styles.comentarioAutor}>{c.autor}</Text>
-                          {podeInteragir && <TouchableOpacity style={{flexDirection: 'row', alignItems: 'center'}} onPress={() => curtirComentario(c.id)}>
+                          {podeInteragir && <TouchableOpacity style={styles.curtidaComentario} onPress={() => curtirComentario(c.id)}
+                            accessibilityRole="button" accessibilityLabel={`Curtir comentário de ${c.autor}`}
+                            {...(Platform.OS === 'web' ? { 'aria-pressed': !!comCur.curtiu } : { accessibilityState: { selected: !!comCur.curtiu } })}>
                             <Ionicons name={comCur.curtiu ? "heart" : "heart-outline"} size={16} color={comCur.curtiu ? "#E63946" : "#777"} />
                             <Text style={{fontSize: 12, color: '#777', marginLeft: 4}}>{comCur.total}</Text>
                           </TouchableOpacity>}
                         </View>
                         <Text style={styles.comentarioTexto}>{c.texto}</Text>
-                        
+
                         <View style={styles.comentarioAcoes}>
                           {podeInteragir && <TouchableOpacity onPress={() => setRespostaPara(c)} disabled={excluindoComentario} accessibilityRole="button">
                             <Text style={styles.responderText}>Responder</Text>
@@ -806,17 +1098,18 @@ export default function TelaEventos() {
               {respostaPara && (
                 <View style={styles.respondendoBox}>
                   <Text style={styles.respondendoText}>Respondendo a {respostaPara.autor}</Text>
-                  <TouchableOpacity onPress={() => setRespostaPara(null)}>
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancelar resposta" onPress={() => setRespostaPara(null)}>
                     <Ionicons name="close-circle" size={16} color="#E63946" />
                   </TouchableOpacity>
                 </View>
               )}
 
               {podeInteragir && <View style={styles.comentarioInputRow}>
-                <TextInput 
-                  style={styles.comentarioInput} 
-                  placeholder="Escreva um comentário..." 
-                  placeholderTextColor="#999"
+                <TextInput
+                  style={styles.comentarioInput}
+                  placeholder="Escreva um comentário..."
+                  accessibilityLabel="Escreva um comentário"
+                  placeholderTextColor="#666"
                   value={textoComentario}
                   onChangeText={setTextoComentario}
                 />
@@ -844,23 +1137,41 @@ export default function TelaEventos() {
             Fique por dentro das novidades
           </Text>
         </View>
-        <Ionicons
-          name="newspaper-outline"
-          size={38}
-          color="#C4C2B7"
-          style={styles.headerIcon}
-        />
+        {Platform.OS === 'web' && podeMarcarInteresse ? (
+          <TouchableOpacity
+            style={[styles.filterChip, styles.filtroInteresses]}
+            accessibilityRole="button"
+            accessibilityLabel="Sincronizar interesses"
+            aria-busy={estadoInteresses.carregando}
+            disabled={
+              (!estadoInteresses.pronto && !estadoInteresses.erro) ||
+              estadoInteresses.carregando ||
+              estadoInteresses.pendente !== null
+            }
+            onPress={() => void tentarCarregarInteresses()}
+          >
+            <Ionicons name="refresh-outline" size={23} color="#2A4B4C" />
+          </TouchableOpacity>
+        ) : (
+          <Ionicons
+            name="newspaper-outline"
+            size={38}
+            color="#C4C2B7"
+            style={styles.headerIcon}
+          />
+        )}
       </View>
 
       <View style={styles.filterBar}>
         <TouchableOpacity
+          testID="filtro-todos"
           style={[
             styles.filterChip,
             filtroAtivo === 'todos' && styles.filterChipActive
           ]}
           onPress={() => alterarFiltro('todos')}
           accessibilityRole="button"
-          accessibilityState={{ selected: filtroAtivo === 'todos' }}
+          {...(Platform.OS === 'web' ? { 'aria-pressed': filtroAtivo === 'todos' } : { accessibilityState: { selected: filtroAtivo === 'todos' } })}
         >
           <Text style={[
             styles.filterText,
@@ -876,7 +1187,8 @@ export default function TelaEventos() {
             ]}
             onPress={() => alterarFiltro('minha')}
             accessibilityRole="button"
-            accessibilityState={{ selected: filtroAtivo === 'minha' }}
+            accessibilityLabel="Minha congregação"
+            {...(Platform.OS === 'web' ? { 'aria-pressed': filtroAtivo === 'minha' } : { accessibilityState: { selected: filtroAtivo === 'minha' } })}
           >
             <Ionicons
               name="people-outline"
@@ -889,7 +1201,36 @@ export default function TelaEventos() {
             ]}>Minha congregação</Text>
           </TouchableOpacity>
         )}
-              {usuarioLogado && !convidado && canManage(usuarioLogado) && (
+        {podeMarcarInteresse && (
+          <TouchableOpacity
+            style={[
+              styles.filterChip,
+              styles.filtroInteresses,
+              filtroAtivo === 'interesses' && styles.filterChipActive
+            ]}
+            onPress={() => alterarFiltro('interesses')}
+            accessibilityRole="button"
+            accessibilityLabel="Filtrar meus interesses"
+            {...(Platform.OS === 'web' ? { 'aria-pressed': filtroAtivo === 'interesses' } : { accessibilityState: { selected: filtroAtivo === 'interesses' } })}
+            testID="filtro-interesses"
+          >
+            <Ionicons
+              name={
+                filtroAtivo === 'interesses'
+                  ? 'bookmark'
+                  : 'bookmark-outline'
+              }
+              size={21}
+              color={
+                filtroAtivo === 'interesses'
+                  ? '#FFFFFF'
+                  : '#2A4B4C'
+              }
+            />
+          </TouchableOpacity>
+        )}
+
+        {usuarioLogado && !convidado && canManage(usuarioLogado) && (
           <TouchableOpacity
             onPress={() => router.push('/criar-post' as any)}
             style={styles.newPostBtn}
@@ -902,28 +1243,46 @@ export default function TelaEventos() {
         )}
       </View>
 
+      {avisoInteresses}
+      {statusInteresses}
+
       {carregando ? (
-        <ActivityIndicator size="large" color="#2A4B4C" style={{ marginTop: 50 }} />
+        <ActivityIndicator accessibilityLabel="Carregando publicações" size="large" color="#2A4B4C" style={{ marginTop: 50 }} />
       ) : erroCarregamento && posts.length === 0 ? (
-        <View style={styles.emptyBox}>
+        <View style={[styles.emptyBox, alturaJanela <= 600 && styles.emptyBoxCompact]}>
           <Ionicons name="cloud-offline-outline" size={50} color="#C4C2B7" />
           <Text accessibilityRole="alert" style={styles.emptyText}>{erroCarregamento}</Text>
-          <TouchableOpacity style={styles.retryButton} onPress={() => { setCarregando(true); void buscarPosts(false); }} accessibilityRole="button">
+          <TouchableOpacity style={styles.retryButton} onPress={() => { setCarregando(true); void buscarPosts(); }} accessibilityRole="button">
             <Text style={styles.retryText}>Tentar novamente</Text>
           </TouchableOpacity>
         </View>
       ) : (
         <FlatList
           data={postsVisiveis}
+          extraData={estadoInteresses}
           keyExtractor={(item) => item.id.toString()}
           renderItem={renderPostFeed}
           ListEmptyComponent={
-            <View style={styles.emptyBox}>
-              <Ionicons name="newspaper-outline" size={50} color="#C4C2B7" />
+            <View style={[styles.emptyBox, alturaJanela <= 600 && styles.emptyBoxCompact]}>
+              <Ionicons
+                name={
+                  filtroAtivo === 'interesses'
+                    ? 'bookmark-outline'
+                    : 'newspaper-outline'
+                }
+                size={50}
+                color="#C4C2B7"
+              />
               <Text style={styles.emptyText}>
-                {filtroAtivo === 'minha'
-                  ? 'Nenhuma publicação da sua congregação no momento.'
-                  : 'Nenhum evento publicado no momento.'}
+                {filtroAtivo === 'interesses'
+                  ? !estadoInteresses.pronto
+                    ? estadoInteresses.erro
+                      ? 'Não foi possível carregar seus interesses.'
+                      : 'Carregando seus interesses...'
+                    : 'Você ainda não marcou nenhuma publicação com interesse.'
+                  : filtroAtivo === 'minha'
+                    ? 'Nenhuma publicação da sua congregação no momento.'
+                    : 'Nenhum evento publicado no momento.'}
               </Text>
               <TouchableOpacity
                 style={styles.retryButton}
@@ -950,7 +1309,11 @@ export default function TelaEventos() {
       <Modal
         visible={menuDisponivel}
         transparent
-        animationType="fade"
+        animationType={reduzirMovimento ? 'none' : 'fade'}
+        accessibilityLabel="Opções da publicação"
+        onShow={() => {
+          if (Platform.OS === 'web') document.querySelector<HTMLElement>('[data-testid="mural-cancelar-menu"]')?.focus();
+        }}
         onRequestClose={() => setMenuPostId(null)}
       >
         <View style={styles.postMenuOverlay}>
@@ -958,11 +1321,11 @@ export default function TelaEventos() {
             style={StyleSheet.absoluteFill}
             activeOpacity={1}
             onPress={() => setMenuPostId(null)}
-            accessibilityRole="button"
-            accessibilityLabel="Fechar opções"
+            accessible={false}
+            focusable={false}
           />
 
-          <View style={styles.postMenuPanel}>
+          <View testID="mural-menu-publicacao" style={styles.postMenuPanel}>
             <View style={styles.postMenuHandle} />
 
             <Text style={styles.postMenuTitle}>
@@ -1001,6 +1364,7 @@ export default function TelaEventos() {
 
             <TouchableOpacity
               style={styles.postMenuCancel}
+              testID="mural-cancelar-menu"
               onPress={() => setMenuPostId(null)}
               accessibilityRole="button"
             >
@@ -1013,24 +1377,26 @@ export default function TelaEventos() {
       </Modal>
 
       {/* MODAL DE COMENTÁRIOS NO FEED NORMAL */}
-      <Modal visible={modalComentariosVisivel} animationType="slide" transparent={true} onRequestClose={fecharComentarios}>
+      <Modal visible={modalComentariosVisivel} accessibilityLabel="Comentários" animationType={reduzirMovimento ? 'none' : Platform.OS === 'web' ? 'fade' : 'slide'} transparent={true} onRequestClose={fecharComentarios}>
         <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
+          <View testID="mural-modal-comentarios" style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>{comentarioParaExcluir ? 'Excluir comentário' : 'Comentários'}</Text>
-              <TouchableOpacity onPress={fecharComentarios}>
+              <TouchableOpacity style={styles.postIconButton} onPress={fecharComentarios} accessibilityRole="button" accessibilityLabel="Fechar comentários">
                 <Ionicons name="close" size={24} color="#333" />
               </TouchableOpacity>
             </View>
 
             {comentarioParaExcluir ? (
-                <View style={styles.confirmacaoComentario}>
+                <ScrollView style={styles.confirmacaoComentarioScroll} contentContainerStyle={styles.confirmacaoComentario}>
                   <View style={styles.confirmacaoComentarioIcone}>
                     <Ionicons name="trash-outline" size={25} color="#D84343" />
                   </View>
                   <Text style={styles.confirmacaoComentarioTitulo}>Excluir este comentário?</Text>
                   <Text style={styles.confirmacaoComentarioAutor}>{comentarioParaExcluir.autor}</Text>
-                  <Text style={styles.confirmacaoComentarioTrecho} numberOfLines={3}>{comentarioParaExcluir.texto}</Text>
+                  <View style={styles.confirmacaoComentarioTrecho}>
+                    <Text style={styles.confirmacaoComentarioTexto} numberOfLines={3}>{comentarioParaExcluir.texto}</Text>
+                  </View>
                   <Text style={styles.confirmacaoComentarioAviso}>
                     As respostas a este comentário também serão removidas.
                   </Text>
@@ -1054,7 +1420,7 @@ export default function TelaEventos() {
                       </Text>
                     </TouchableOpacity>
                   </View>
-                </View>
+                </ScrollView>
               ) : (
                 <>
                   {erroComentario ? (
@@ -1063,7 +1429,7 @@ export default function TelaEventos() {
                   {avisoComentario ? (
                     <Text accessibilityRole="alert" style={styles.avisoComentario}>{avisoComentario}</Text>
                   ) : null}
-                  <ScrollView style={{ maxHeight: 320, marginBottom: 15 }}>
+                <ScrollView style={styles.listaComentarios}>
               {comentarios.length === 0 ? (
                 <Text style={styles.emptyComentarios}>{podeInteragir ? 'Nenhum comentário ainda. Seja o primeiro a comentar!' : 'Nenhum comentário disponível.'}</Text>
               ) : (
@@ -1074,13 +1440,15 @@ export default function TelaEventos() {
                     <View key={c.id} style={[styles.comentarioItem, c.parent_id && { marginLeft: 25, borderLeftWidth: 2, borderLeftColor: '#2A4B4C', paddingLeft: 10 }]}>
                       <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2}}>
                         <Text style={styles.comentarioAutor}>{c.autor}</Text>
-                        {podeInteragir && <TouchableOpacity style={{flexDirection: 'row', alignItems: 'center'}} onPress={() => curtirComentario(c.id)}>
+                        {podeInteragir && <TouchableOpacity style={styles.curtidaComentario} onPress={() => curtirComentario(c.id)}
+                          accessibilityRole="button" accessibilityLabel={`Curtir comentário de ${c.autor}`}
+                          {...(Platform.OS === 'web' ? { 'aria-pressed': !!comCur.curtiu } : { accessibilityState: { selected: !!comCur.curtiu } })}>
                           <Ionicons name={comCur.curtiu ? "heart" : "heart-outline"} size={16} color={comCur.curtiu ? "#E63946" : "#777"} />
                           <Text style={{fontSize: 12, color: '#777', marginLeft: 4}}>{comCur.total}</Text>
                         </TouchableOpacity>}
                       </View>
                       <Text style={styles.comentarioTexto}>{c.texto}</Text>
-                      
+
                       <View style={styles.comentarioAcoes}>
                         {podeInteragir && <TouchableOpacity onPress={() => setRespostaPara(c)} disabled={excluindoComentario} accessibilityRole="button">
                           <Text style={styles.responderText}>Responder</Text>
@@ -1103,17 +1471,18 @@ export default function TelaEventos() {
             {respostaPara && (
               <View style={styles.respondendoBox}>
                 <Text style={styles.respondendoText}>Respondendo a {respostaPara.autor}</Text>
-                <TouchableOpacity onPress={() => setRespostaPara(null)}>
+                <TouchableOpacity accessibilityRole="button" accessibilityLabel="Cancelar resposta" onPress={() => setRespostaPara(null)}>
                   <Ionicons name="close-circle" size={16} color="#E63946" />
                 </TouchableOpacity>
               </View>
             )}
 
             {podeInteragir && <View style={styles.comentarioInputRow}>
-              <TextInput 
-                style={styles.comentarioInput} 
-                placeholder="Escreva um comentário..." 
-                placeholderTextColor="#999"
+              <TextInput
+                style={styles.comentarioInput}
+                placeholder="Escreva um comentário..."
+                accessibilityLabel="Escreva um comentário"
+                placeholderTextColor="#666"
                 value={textoComentario}
                 onChangeText={setTextoComentario}
               />
@@ -1131,6 +1500,7 @@ export default function TelaEventos() {
 }
 
 const styles = StyleSheet.create({
+  leitorTela: { position: 'absolute', width: 1, height: 1, overflow: 'hidden' },
   container: { flex: 1, backgroundColor: '#F7F5EC' },
   header: {
     backgroundColor: '#2A4B4C',
@@ -1181,7 +1551,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    minHeight: 40,
+    minHeight: 44,
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 24,
@@ -1217,6 +1587,7 @@ const styles = StyleSheet.create({
   bannerNovosPostsText: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
 
   emptyBox: { alignItems: 'center', marginTop: 50, padding: 20 },
+  emptyBoxCompact: { marginTop: 16, paddingVertical: 12 },
   emptyText: { color: '#666', fontSize: 14, marginTop: 10 },
   retryButton: { backgroundColor: '#2A4B4C', marginTop: 16, paddingHorizontal: 18, paddingVertical: 10, borderRadius: 8 },
   retryText: { color: '#fff', fontWeight: 'bold' },
@@ -1259,6 +1630,50 @@ const styles = StyleSheet.create({
     minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+
+  interesseFullscreen: {
+    minWidth: 44,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  filtroInteresses: {
+    width: 44,
+    height: 44,
+    paddingHorizontal: 0,
+    paddingVertical: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  interesseBotao: {
+    marginLeft: 'auto',
+  },
+
+  interesseDesabilitado: {
+    opacity: 0.45,
+  },
+
+  interesseAviso: {
+    paddingHorizontal: 15,
+    paddingVertical: 8,
+  },
+
+  interesseAvisoFullscreen: {
+    position: 'absolute',
+    top: 50,
+    left: 72,
+    right: 16,
+    zIndex: 30,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+  },
+
+  interesseAvisoTexto: {
+    color: '#9B3434',
+    fontSize: 12,
   },
 
   postLikesText: {
@@ -1355,22 +1770,24 @@ const styles = StyleSheet.create({
   fullscreenWrapper: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: '#000', zIndex: 9999 },
   // A altura de cada slide é definida em tempo de execução (altura real medida da tela)
   fullscreenSlide: { alignSelf: 'stretch', backgroundColor: '#000', position: 'relative', justifyContent: 'center', alignItems: 'center' },
-  
+
   fullscreenMediaLayer: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' },
   fullscreenImage: { width: '100%', height: '100%' },
   videoFullscreenPlaceholder: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#111', width: '100%', height: '100%' },
   videoTextLarge: { color: '#fff', marginTop: 10, fontSize: 16, fontWeight: 'bold' },
 
-  backFullscreenBtn: { position: 'absolute', top: 50, left: 20, zIndex: 30, backgroundColor: 'rgba(0,0,0,0.4)', padding: 10, borderRadius: 25 },
+  backFullscreenBtn: { position: 'absolute', top: 50, left: 20, zIndex: 30, backgroundColor: 'rgba(0,0,0,0.72)', minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', padding: 9, borderRadius: 25 },
 
-  floatingRightControls: { position: 'absolute', right: 20, bottom: 160, zIndex: 20, alignItems: 'center', gap: 20 },
-  floatingActionClean: { alignItems: 'center', justifyContent: 'center' },
-  floatingTextClean: { color: '#fff', fontSize: 14, fontWeight: 'bold', marginTop: 4 },
+  floatingRightControls: { position: 'absolute', right: 16, bottom: 160, zIndex: 20, alignItems: 'center', gap: 12 },
+  floatingRightControlsCompact: { bottom: 24, gap: 4 },
+  floatingActionClean: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.72)', borderRadius: 10 },
+  floatingTextClean: { color: '#fff', fontSize: 11, fontWeight: '600', marginTop: 3 },
 
   dropShadow: { textShadowColor: 'rgba(0, 0, 0, 0.75)', textShadowOffset: { width: -1, height: 1 }, textShadowRadius: 5 },
   dropShadowText: { color: '#fff', textShadowColor: 'rgba(0, 0, 0, 0.8)', textShadowOffset: { width: -1, height: 1 }, textShadowRadius: 4 },
 
-  fullscreenFooterClean: { position: 'absolute', bottom: 0, left: 0, right: 0, paddingHorizontal: 20, paddingBottom: 45, paddingTop: 40, zIndex: 20 },
+  fullscreenFooterClean: { position: 'absolute', bottom: 0, left: 0, right: 84, paddingHorizontal: 20, paddingBottom: 45, paddingTop: 16, zIndex: 20, backgroundColor: 'rgba(0,0,0,0.72)' },
+  fullscreenFooterCompact: { paddingBottom: 20, paddingTop: 8 },
   authorRowFooter: { flexDirection: 'row', alignItems: 'center', marginBottom: 8 },
   authorAvatarFooter: { width: 36, height: 36, borderRadius: 18, marginRight: 10, borderWidth: 1, borderColor: '#fff' },
   authorAvatarPlaceholderFooter: { width: 36, height: 36, borderRadius: 18, backgroundColor: '#333', justifyContent: 'center', alignItems: 'center', marginRight: 10 },
@@ -1381,23 +1798,27 @@ const styles = StyleSheet.create({
 
   // Modal Comentários
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' },
-  modalContent: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, maxHeight: '75%', elevation: 5 },
-  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 15 },
+  modalContent: { backgroundColor: '#fff', borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 20, width: '100%', maxWidth: 640, alignSelf: 'center', maxHeight: '85%', elevation: 5 },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0, marginBottom: 8 },
   modalTitle: { fontSize: 18, fontWeight: 'bold', color: '#2A4B4C' },
-  emptyComentarios: { color: '#888', fontSize: 13, textAlign: 'center', marginVertical: 20 },
+  listaComentarios: { maxHeight: 320, minHeight: 0, flexShrink: 1, marginBottom: 15 },
+  emptyComentarios: { color: '#666', fontSize: 13, textAlign: 'center', marginVertical: 20 },
   comentarioItem: { backgroundColor: '#F9F9F6', padding: 10, borderRadius: 8, marginBottom: 8 },
   comentarioAutor: { fontSize: 13, fontWeight: 'bold', color: '#2A4B4C' },
+  curtidaComentario: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', minWidth: 44, minHeight: 44 },
   comentarioTexto: { fontSize: 14, color: '#333', marginTop: 2 },
   responderText: { fontSize: 11, color: '#2A4B4C', fontWeight: 'bold' },
   comentarioAcoes: { flexDirection: 'row', alignItems: 'center', gap: 20, marginTop: 7 },
   excluirComentarioText: { fontSize: 11, fontWeight: 'bold', color: '#B83E43' },
   erroComentario: { backgroundColor: '#FFE8E9', color: '#A22C33', padding: 10, borderRadius: 9, marginBottom: 12, fontSize: 13 },
   avisoComentario: { backgroundColor: '#E2EAE9', color: '#2A4B4C', padding: 10, borderRadius: 9, marginBottom: 12, fontSize: 13 },
+  confirmacaoComentarioScroll: { minHeight: 0, flexShrink: 1, flexGrow: 0 },
   confirmacaoComentario: { alignItems: 'center', gap: 10, paddingVertical: 12 },
   confirmacaoComentarioIcone: { backgroundColor: '#FFE8E9', borderRadius: 28, width: 56, height: 56, justifyContent: 'center', alignItems: 'center' },
   confirmacaoComentarioTitulo: { fontSize: 18, fontWeight: '700', color: '#2A4B4C', textAlign: 'center' },
   confirmacaoComentarioAutor: { fontSize: 13, fontWeight: '700', color: '#2A4B4C' },
-  confirmacaoComentarioTrecho: { fontSize: 14, textAlign: 'center', color: '#444', backgroundColor: '#F7F5EC', padding: 12, borderRadius: 9, alignSelf: 'stretch' },
+  confirmacaoComentarioTrecho: { backgroundColor: '#F7F5EC', padding: 12, borderRadius: 9, alignSelf: 'stretch' },
+  confirmacaoComentarioTexto: { fontSize: 14, lineHeight: 19, textAlign: 'center', color: '#444' },
   confirmacaoComentarioAviso: { fontSize: 12, textAlign: 'center', color: '#78634D', marginBottom: 8 },
   confirmacaoComentarioAcoes: { flexDirection: 'row', gap: 10, alignSelf: 'stretch' },
   cancelarExclusaoComentario: { flex: 1, backgroundColor: '#E2EAE9', borderRadius: 12, minHeight: 45, alignItems: 'center', justifyContent: 'center' },
@@ -1406,7 +1827,7 @@ const styles = StyleSheet.create({
   confirmarExclusaoComentarioTexto: { color: '#FFFFFF', fontWeight: '700' },
   respondendoBox: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#E2EAE9', padding: 6, borderRadius: 6, marginBottom: 8 },
   respondendoText: { fontSize: 12, color: '#2A4B4C' },
-  comentarioInputRow: { flexDirection: 'row', alignItems: 'center' },
+  comentarioInputRow: { flexDirection: 'row', alignItems: 'center', flexShrink: 0 },
   comentarioInput: { flex: 1, backgroundColor: '#F0F0F0', padding: 10, borderRadius: 8, fontSize: 14, color: '#333' },
-  enviarComentarioBtn: { backgroundColor: '#2A4B4C', justifyContent: 'center', alignItems: 'center', padding: 10, borderRadius: 8, marginLeft: 8 }
+  enviarComentarioBtn: { backgroundColor: '#2A4B4C', minWidth: 44, minHeight: 44, justifyContent: 'center', alignItems: 'center', padding: 10, borderRadius: 8, marginLeft: 8 }
 });
